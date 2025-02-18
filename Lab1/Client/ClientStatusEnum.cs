@@ -11,6 +11,7 @@ namespace Client
         Fail,
         Success,
         Error,
-        LostConnection
+        LostConnection,
+        ConnectionError
     }
 }

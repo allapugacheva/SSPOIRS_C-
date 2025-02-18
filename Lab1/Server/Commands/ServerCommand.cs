@@ -10,7 +10,7 @@ namespace Server.Commands
     {
         internal abstract string Name { get; }
 
-        internal abstract bool Execute(string? parameters = null);
+        internal abstract bool Execute(object[]? parameters = null);
 
         internal bool IsContain(string name)
         {
