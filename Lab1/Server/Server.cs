@@ -20,6 +20,8 @@ namespace Server
 
         private readonly ServerBackup _backup;
 
+        private readonly CommandList _commandsList;
+
 
         internal TcpServer()
         {
@@ -34,6 +36,7 @@ namespace Server
 
             _settings = new ServerSettings();
             _backup = new ServerBackup();
+            _commandsList = new CommandList(ServerConfig.CommandCapacity);
         }
 
         internal ServerStatusEnum StartUp()
@@ -189,7 +192,7 @@ namespace Server
                     else break;
                 }
             }
-            catch (Exception ex)
+            catch (SocketException ex) when (ex.SocketErrorCode != SocketError.WouldBlock)
             {
                 _backup.HasCorruptedData = true;
                 _backup.CorruptedPos = bytesRead;

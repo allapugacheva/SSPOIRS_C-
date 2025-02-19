@@ -2,7 +2,6 @@
 using System.Net.Sockets;
 using System.Text;
 using System.Diagnostics;
-using Luna.ConsoleProgressBar;
 
 namespace Client
 {

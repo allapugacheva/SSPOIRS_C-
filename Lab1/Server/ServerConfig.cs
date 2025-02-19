@@ -17,6 +17,7 @@ namespace Server
 
         internal const int RecoveryTryTIme = 5;
 
+        internal const int CommandCapacity = 10;
         internal static int MaxFileNameLength
         {
             get 
