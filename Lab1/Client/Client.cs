@@ -28,6 +28,7 @@ namespace Client
         {
             try { _socket.Connect(new IPEndPoint(_serverAddress, ClientConfig.DefaultPort));}
             catch (SocketException) { return ClientStatusEnum.ConnectionError; }
+            _socket.Blocking = false;
 
             Console.Write($"{Colors.GREEN}Client start.{Colors.RESET}\n> ");
 

@@ -47,9 +47,6 @@ namespace Server
 
         internal ServerStatusEnum Run()
         {
-            if (_socket == null)
-                return ServerStatusEnum.Fail;
-
             Console.Write($"{Colors.GREEN}Server is start.{Colors.RESET}\n> ");
 
             var commandString = new StringBuilder(50);
@@ -174,7 +171,7 @@ namespace Server
 
             _backup.LastReceivedFilePath = filePath;
 
-            var fll = new FileLoadingLine(new FileInfo(filePath).Length);
+            var fll = new FileLoadingLine(fileSize);
             var timer = new Stopwatch(); 
             try
             {
@@ -192,7 +189,7 @@ namespace Server
                     else break;
                 }
             }
-            catch (SocketException ex) when (ex.SocketErrorCode != SocketError.WouldBlock)
+            catch (Exception ex)
             {
                 _backup.HasCorruptedData = true;
                 _backup.CorruptedPos = bytesRead;
@@ -239,9 +236,6 @@ namespace Server
 
         internal IPAddress? ConnectClient()
         {
-            if (_socket == null)
-                return null;
-
             _clientSocket = _socket.Accept();
             _clientSocket.Blocking = false;
 
