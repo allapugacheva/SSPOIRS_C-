@@ -39,9 +39,7 @@ namespace Server
         internal ServerStatusEnum StartUp()
         {
             _socket.Bind(new IPEndPoint(IPAddress.Any, ServerConfig.DefaultPort));
-
             _socket.Listen(ServerConfig.AmountListeners);
-
             return ServerStatusEnum.Success;
         }
 
@@ -120,20 +118,17 @@ namespace Server
         internal ServerStatusEnum ListenClient()
         {
             var res = ServerStatusEnum.Fail;
-            byte[] commandSizeBytes = new byte[sizeof(int)];
-            if (GetData(out commandSizeBytes, sizeof(int), 200_000) == sizeof(int))
+            if (GetData(out var commandSizeBytes, sizeof(int), 200_000) == sizeof(int))
             {
                 int commandLength = BitConverter.ToInt32(commandSizeBytes);
-                byte[] commandBytes = new byte[commandLength];
-                if (GetData(out commandBytes, commandLength, 200_000) == commandLength)
+                if (GetData(out var commandBytes, commandLength, 200_000) == commandLength)
                 {
                     string clientCommand = Encoding.Unicode.GetString(commandBytes).Replace("\0", string.Empty);
 
                     var parameters = clientCommand.Split(' ').Skip(1).ToArray();
-                    string filePath = string.Empty;
                     if (parameters != null && parameters.Length > 0)
                     {
-                        filePath = Path.Combine(_settings.CurrentDirectory, Path.GetFileName(parameters[0]));
+                        string filePath = Path.Combine(_settings.CurrentDirectory, Path.GetFileName(parameters[0]));
                         
                         if (clientCommand.StartsWith("UPLOAD"))
                             res = ReceiveFile(filePath);
@@ -182,7 +177,7 @@ namespace Server
                 while (true)
                 {
                     timer.Start();
-                    if ((bytePortion = GetData(out buffer, usec: 500_000)) != 0 && buffer != null)
+                    if ((bytePortion = GetData(out buffer, microseconds: 500_000)) != 0 && buffer != null)
                     {
                         writer.Write(buffer, 0, bytePortion);
                         bytesRead += bytePortion;
@@ -212,7 +207,7 @@ namespace Server
             return ServerStatusEnum.Success;
         }
 
-        internal int SendData(byte[] data, int size = 0, int usec = 100_000)
+        internal int SendData(byte[] data, int size = 0, int microseconds = 100_000)
         {
             if (data.Length == 0)
                 return 0;
@@ -220,14 +215,14 @@ namespace Server
             if (size == 0)
                 size = data.Length;
 
-            if (_clientSocket.Poll(usec, SelectMode.SelectWrite))
+            if (_clientSocket.Poll(microseconds, SelectMode.SelectWrite))
             {
                 return _clientSocket.Send(data, size, SocketFlags.None);
             }
             return 0;
         }
 
-        internal int GetData(out byte[]? data, int size = 0, int usec = 100_000)
+        internal int GetData(out byte[]? data, int size = 0, int microseconds = 100_000)
         {
             if (size == 0)
                 size = ServerConfig.ServingSize;    
@@ -236,7 +231,7 @@ namespace Server
             data = null;
 
             int read = 0;
-            if (_clientSocket.Poll(usec, SelectMode.SelectRead))
+            if (_clientSocket.Poll(microseconds, SelectMode.SelectRead))
             {
                 if ((read = _clientSocket.Receive(buffer, 0, size, SocketFlags.None)) != 0)
                     data = buffer.AsSpan(0, read).ToArray();
