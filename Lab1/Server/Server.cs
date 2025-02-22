@@ -1,6 +1,5 @@
 ﻿using Client;
 using Server.Commands;
-using System.ComponentModel;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
@@ -19,8 +18,7 @@ namespace Server
         private readonly ServerSettings _settings;
 
         private readonly ServerBackup _backup;
-
-        private readonly CommandList _commandsList;
+        
 
 
         internal TcpServer()
@@ -36,7 +34,6 @@ namespace Server
 
             _settings = new ServerSettings();
             _backup = new ServerBackup();
-            _commandsList = new CommandList(ServerConfig.CommandCapacity);
         }
 
         internal ServerStatusEnum StartUp()
@@ -82,14 +79,13 @@ namespace Server
 
                 if (Console.KeyAvailable)
                 {
-                    var keyInfo = Console.ReadKey(true);
+                    var keyInfo = Console.ReadKey(true); 
                     if (keyInfo.Key == ConsoleKey.Enter)
                     {
                         Console.WriteLine();
                         var commandParts = commandString.ToString().Split(' ');
                         var commandName = commandParts[0];
                         var commandValues = commandParts.Length > 1 ? commandParts.Skip(1).ToArray() : null;
-
                         if (_commands.TryGetValue(commandName, out var serverCommand))
                         {
                             serverCommand.Execute(commandValues);
@@ -124,24 +120,29 @@ namespace Server
         internal ServerStatusEnum ListenClient()
         {
             var res = ServerStatusEnum.Fail;
-            byte[] bytes = new byte[ServerConfig.MaxFileNameLength + ServerConfig.MaxClientCommnadLength];
-            if (_clientSocket.Receive(bytes) != 0)
+            byte[] commandSizeBytes = new byte[sizeof(int)];
+            if (GetData(out commandSizeBytes, sizeof(int), 200_000) == sizeof(int))
             {
-                string clientCommand = Encoding.Unicode.GetString(bytes).Replace("\0", "");
-
-                var parameters = clientCommand.Split(' ').Skip(1).ToArray();
-                string filePath = string.Empty;
-                if (parameters != null && parameters.Length > 0)
+                int commandLength = BitConverter.ToInt32(commandSizeBytes);
+                byte[] commandBytes = new byte[commandLength];
+                if (GetData(out commandBytes, commandLength, 200_000) == commandLength)
                 {
-                    filePath = Path.Combine(_settings.CurrentDirectory, Path.GetFileName(parameters[0]));
+                    string clientCommand = Encoding.Unicode.GetString(commandBytes).Replace("\0", string.Empty);
 
-                    if (clientCommand.StartsWith("UPLOAD"))
-                        res = ReceiveFile(filePath);
+                    var parameters = clientCommand.Split(' ').Skip(1).ToArray();
+                    string filePath = string.Empty;
+                    if (parameters != null && parameters.Length > 0)
+                    {
+                        filePath = Path.Combine(_settings.CurrentDirectory, Path.GetFileName(parameters[0]));
+                        
+                        if (clientCommand.StartsWith("UPLOAD"))
+                            res = ReceiveFile(filePath);
 
-                    if (res == ServerStatusEnum.Success)
-                        Console.Write($"{Colors.BLUE}The file was successfully transferred{Colors.RESET}\n> ");
-                    else if (res == ServerStatusEnum.Error)
-                        Console.Write($"{Colors.RED}The file was not transferred{Colors.RESET}\n> ");
+                        if (res == ServerStatusEnum.Success)
+                            Console.Write($"{Colors.BLUE}The file was successfully transferred{Colors.RESET}\n> ");
+                        else if (res == ServerStatusEnum.Error)
+                            Console.Write($"{Colors.RED}The file was not transferred{Colors.RESET}\n> ");
+                    }   
                 }
             }
 
@@ -154,14 +155,14 @@ namespace Server
             long bytesRead = 0; int bytePortion;
 
             using var writer = new FileStream(filePath, FileMode.OpenOrCreate, FileAccess.Write);
-
+            
             long fileSize = 0;
-            if (GetData(out var fileSizeByte, 300_000) != 0 && fileSizeByte != null)
-                fileSize = BitConverter.ToInt64(fileSizeByte);
+            if (GetData(out buffer, sizeof(long), 500_000) != 0)
+                fileSize = BitConverter.ToInt64(buffer);
             else
                 return ServerStatusEnum.Fail;
             Console.WriteLine("File size: " + fileSize);
-
+            
             if (_backup.HasCorruptedData && _backup.LastReceivedFilePath.Equals(filePath))
             {
                 _backup.HasCorruptedData = false;
@@ -175,13 +176,13 @@ namespace Server
             _backup.LastReceivedFilePath = filePath;
 
             var fll = new FileLoadingLine(fileSize);
-            var timer = new Stopwatch(); 
+            var timer = new Stopwatch();
             try
             {
                 while (true)
                 {
                     timer.Start();
-                    if((bytePortion = GetData(out buffer, 500_000)) != 0 && buffer != null)
+                    if ((bytePortion = GetData(out buffer, usec: 500_000)) != 0 && buffer != null)
                     {
                         writer.Write(buffer, 0, bytePortion);
                         bytesRead += bytePortion;
@@ -197,6 +198,10 @@ namespace Server
                 _backup.HasCorruptedData = true;
                 _backup.CorruptedPos = bytesRead;
                 return ServerStatusEnum.LostConnection;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.Message);
             }
 
             Console.Write($"\r{Colors.GREEN}Success{Colors.RESET} sent " +
@@ -222,16 +227,19 @@ namespace Server
             return 0;
         }
 
-        internal int GetData(out byte[]? data, int usec = 100_000)
+        internal int GetData(out byte[]? data, int size = 0, int usec = 100_000)
         {
-            var buffer = new byte[ServerConfig.ServingSize];
+            if (size == 0)
+                size = ServerConfig.ServingSize;    
+            
+            var buffer = new byte[size];
             data = null;
 
             int read = 0;
             if (_clientSocket.Poll(usec, SelectMode.SelectRead))
             {
-                if ((read = _clientSocket.Receive(buffer)) != 0)
-                    data = buffer.SkipLast(buffer.Length - read).ToArray();
+                if ((read = _clientSocket.Receive(buffer, 0, size, SocketFlags.None)) != 0)
+                    data = buffer.AsSpan(0, read).ToArray();
             }
 
             return read;
@@ -241,7 +249,7 @@ namespace Server
         {
             _clientSocket = _socket.Accept();
             _clientSocket.Blocking = false;
-
+            
             var clientIp = (IPEndPoint?)_clientSocket.RemoteEndPoint;
             return clientIp?.Address;
         }

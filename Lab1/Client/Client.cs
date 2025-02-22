@@ -37,7 +37,7 @@ namespace Client
                 if (Console.KeyAvailable)
                 {
                     var keyInfo = Console.ReadKey(true);
-                    if (keyInfo.Key == ConsoleKey.Enter)
+                    if (keyInfo.Key ==  ConsoleKey.Enter)
                     {
                         var commandParts = commandString.ToString().Split(' ');
                         var commandName = commandParts[0];
@@ -85,11 +85,11 @@ namespace Client
             if (!File.Exists(filePath))
                 return;
 
-            SendData(Encoding.Unicode.GetBytes(commnad + " " + Path.GetFileName(filePath)));
+            var bytes = Encoding.Unicode.GetBytes($"{commnad} {Path.GetFileName(filePath)}");
+            SendData(BitConverter.GetBytes(bytes.Length));
+            SendData(bytes);
             if (commnad.StartsWith("UPLOAD"))
-            {
                 SendFile(filePath);
-            }
         }
 
 
@@ -101,7 +101,7 @@ namespace Client
 
             SendData(BitConverter.GetBytes(fileSize));
 
-            if (GetData(out var data, 300_000) != 0)
+            if (GetData(out var data, size:8,300_000) != 0)
             {
                 bytesSent = BitConverter.ToInt64(data);
                 reader.Seek(bytesSent, SeekOrigin.Begin);
@@ -152,16 +152,19 @@ namespace Client
             return 0;
         }
 
-        internal int GetData(out byte[]? data, int usec = 100_000)
+        internal int GetData(out byte[]? data, int size = 0, int usec = 100_000)
         {
-            var buffer = new byte[ClientConfig.ServingSize];
+            if (size == 0)
+                size = ClientConfig.ServingSize;    
+            
+            var buffer = new byte[size];
             data = null;
 
             int read = 0;
             if (_socket.Poll(usec, SelectMode.SelectRead))
             {
-                if ((read = _socket.Receive(buffer)) != 0)
-                    data = buffer.SkipLast(buffer.Length - read).ToArray();
+                if ((read = _socket.Receive(buffer, 0, size, SocketFlags.None)) != 0)
+                    data = buffer.AsSpan(0, read).ToArray();
             }
 
             return read;
