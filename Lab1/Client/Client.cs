@@ -13,31 +13,60 @@ namespace Client
 
         private readonly ClientSetting _settings;
 
+        private bool _isConnected;
+        
+        private readonly Stopwatch _checkTimer;
 
+        private const double CheckTimeout = 29.9999999999;
+
+        
         internal TcpClient(IPAddress serverIp)
         {
             _serverAddress = serverIp;
             _socket = new(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
 
             _settings = new ClientSetting();
+            _checkTimer = new Stopwatch();
         }
+        
+        private bool CheckConnection() => _socket.Poll(0, SelectMode.SelectRead) && _socket.Available == 0;
+        
+        private bool TryConnect()
+        {
+            try
+            {
+                _socket.Connect(new IPEndPoint(_serverAddress, ClientConfig.DefaultPort));
+                _isConnected = true;
+                _socket.Blocking = false;
+            }
+            catch (SocketException)
+            {
+                return false;
+            }
 
-
+            return true;
+        }
+        
         internal ClientStatusEnum Run()
         {
-            try { _socket.Connect(new IPEndPoint(_serverAddress, ClientConfig.DefaultPort));}
-            catch (SocketException) { return ClientStatusEnum.ConnectionError; }
-            _socket.Blocking = false;
-
-            Console.Write($"{Colors.GREEN}Client start.{Colors.RESET}\n> ");
-
             var commandString = new StringBuilder();
             while (true)
             {
+                if (!_isConnected)
+                {
+                    if (!TryConnect())
+                    {
+                        Console.WriteLine("Соси хуй сервер сдох");
+                        break;
+                    }
+                    Console.Write($"{Colors.GREEN}Client start.{Colors.RESET}\n> ");
+                    _checkTimer.Start();
+                }
+                
                 if (Console.KeyAvailable)
                 {
                     var keyInfo = Console.ReadKey(true);
-                    if (keyInfo.Key ==  ConsoleKey.Enter)
+                    if (keyInfo.Key == ConsoleKey.Enter)
                     {
                         var commandParts = commandString.ToString().Split(' ');
                         var commandName = commandParts[0];
@@ -49,21 +78,17 @@ namespace Client
                                 Console.WriteLine($"{Colors.BLUE}{_settings.CurrentDirectory}{Colors.RESET}");
                             else
                                 Console.WriteLine(_settings);
-                        }
-                        else
-                        {
-                            ClientHandler(commandName, commandValues);
-                        }
+                        } 
+                        else if (ClientHandler(commandName, commandValues) == ClientStatusEnum.LostConnection)
+                                _isConnected = false;
+
                         commandString.Clear();
                         Console.Write("\n> ");
                     }
-                    else if (keyInfo.Key == ConsoleKey.Backspace)
+                    else if (commandString.Length > 0 && keyInfo.Key == ConsoleKey.Backspace)
                     {
-                        if (commandString.Length > 0)
-                        {
-                            commandString.Remove(commandString.Length - 1, 1);
-                            Console.Write("\b \b");
-                        }
+                        commandString.Remove(commandString.Length - 1, 1);
+                        Console.Write("\b \b");
                     }
                     else
                     {
@@ -71,46 +96,65 @@ namespace Client
                         Console.Write(keyInfo.KeyChar);
                     }
                 }
+                
+                if(CheckConnection())
+                {
+                    Console.WriteLine("Соси хуй сервер сдох");
+                    Console.ReadLine();
+                    break;
+                }
+                
             }
 
             return ClientStatusEnum.Success;
         }
 
-        internal void ClientHandler(string commnad, string[]? parameters = null)
+        private ClientStatusEnum ClientHandler(string command, string[]? parameters = null)
         {
-            string filePath = ".";
+            var res = ClientStatusEnum.Fail;
+            var filePath = ".";
             if (parameters != null && parameters.Length > 0)
                 filePath = Path.Combine(_settings.CurrentDirectory, parameters[0]);
 
             if (!File.Exists(filePath))
-                return;
+                return res;
 
-            var bytes = Encoding.Unicode.GetBytes($"{commnad} {Path.GetFileName(filePath)}");
+            var bytes = Encoding.Unicode.GetBytes($"{command} {Path.GetFileName(filePath)}");
             SendData(BitConverter.GetBytes(bytes.Length));
             SendData(bytes);
-            if (commnad.StartsWith("UPLOAD"))
-                SendFile(filePath);
+            if (command.StartsWith("UPLOAD"))
+                res = SendFile(filePath);
+            /*else if (command.StartsWith("DOWNLOAD"))
+                res = ReceiveFile(filePath);*/
+            
+            if(res == ClientStatusEnum.LostConnection)
+                Console.WriteLine("Операция с файлом не была завершена полностью");
+
+            return res;
         }
 
 
-        internal ClientStatusEnum SendFile(string filePath)
+        private ClientStatusEnum SendFile(string filePath)
         {
+            var res = ClientStatusEnum.Success;
             long bytesSent = 0; int bytePortion;
             using var reader = new FileStream(filePath, FileMode.Open, FileAccess.Read);
-            long fileSize = reader.Length;
+            var fileSize = reader.Length;
 
             SendData(BitConverter.GetBytes(fileSize));
 
-            if (GetData(out var data, size:8,300_000) != 0)
+            var startPosBytes = new byte[sizeof(long)];
+            if (GetData(startPosBytes, sizeof(long), 300_000) != 0)
             {
-                bytesSent = BitConverter.ToInt64(data);
+                bytesSent = BitConverter.ToInt64(startPosBytes);
                 reader.Seek(bytesSent, SeekOrigin.Begin);
+                Console.WriteLine($"Transfer was {Colors.BLUE}recovery{Colors.RESET} " +
+                                  $"from pos: {bytesSent}.");
             }
 
-            byte[] buffer = new byte[ClientConfig.ServingSize];
-
             var fll = new FileLoadingLine(new FileInfo(filePath).Length);
-            var timer = new Stopwatch(); 
+            var timer = new Stopwatch();
+            var buffer = new byte[ClientConfig.ServingSize];
             try
             {
                 while (true)
@@ -120,54 +164,99 @@ namespace Client
                         break;
 
                     bytesSent += SendData(buffer, bytePortion, 400_000);
+                    if (bytesSent == 0)
+                        throw new SocketException((int)SocketError.Disconnecting);
+                    
                     timer.Stop();
                     fll.Report(bytesSent, timer.Elapsed.TotalSeconds);
                 }
             }
-            catch (SocketException ex)
+            catch (SocketException) 
             {
-                Console.Write(ex.Message);
+                res = ClientStatusEnum.LostConnection;
             }
 
             Console.Write($"\r{Colors.GREEN}Success{Colors.RESET} sent " +
-                $"{Colors.GREEN}{bytesSent}{Colors.RESET} Byte; " +
-                $"Speed: {Colors.BLUE}{FileLoadingLine.GetSpeed(bytesSent, timer.Elapsed.TotalSeconds)}{Colors.RESET}; " +
-                $"Time: {Colors.YELLOW}{timer.Elapsed.TotalSeconds:F3}{Colors.RESET} s");
+                          $"{Colors.GREEN}{bytesSent}{Colors.RESET}/{fileSize} Bytes; " +
+                          $"Speed: {Colors.BLUE}{FileLoadingLine.GetSpeed(bytesSent, timer.Elapsed.TotalSeconds)}{Colors.RESET}; " +
+                          $"Time: {Colors.YELLOW}{timer.Elapsed.TotalSeconds:F3}{Colors.RESET} s");
+
+            return res;
+        }
+
+        /*
+        private ClientStatusEnum ReceiveFile(string filePath)
+        {
+            using var writer = new FileStream(filePath, FileMode.OpenOrCreate, FileAccess.Write);
+
+            long fileSize = 0;
+            if (GetData(out var fileSizeBuffer, sizeof(long), 500_000) != 0)
+                fileSize = BitConverter.ToInt64(fileSizeBuffer);
+
+            Console.WriteLine("File size: " + fileSize);
+
+            long bytesRead = 0;
+            if (GetData(out var startPositionBuffer, sizeof(long), 500_000) != 0)
+            {
+                bytesRead = BitConverter.ToInt64(startPositionBuffer);
+                if (bytesRead != 0)
+                    Console.WriteLine($"Transferred was {Colors.GREEN}recovery{Colors.RESET} from pos: " + bytesRead);
+                writer.Seek(bytesRead, SeekOrigin.Begin);
+            }
+            
+            int bytePortion;
+            var fll = new FileLoadingLine(fileSize);
+            var timer = new Stopwatch();
+            try
+            {
+                while (true)
+                {
+                    timer.Start();
+                    if ((bytePortion = GetData(out var buffer, microseconds: 500_000)) != 0)
+                    {
+                        writer.Write(buffer, 0, bytePortion);
+                        bytesRead += bytePortion;
+
+                        timer.Stop();
+                        fll.Report(bytesRead, timer.Elapsed.TotalSeconds);
+                    }
+                    else break;
+                }
+            }
+            catch (SocketException ex) when (ex.SocketErrorCode != SocketError.WouldBlock)
+            {
+                return ClientStatusEnum.LostConnection;
+            }
+
+            Console.Write($"\r{Colors.GREEN}Success{Colors.RESET} sent " +
+                          $"{Colors.GREEN}{bytesRead}{Colors.RESET} Byte; " +
+                          $"Speed: {Colors.BLUE}{FileLoadingLine.GetSpeed(bytesRead, timer.Elapsed.TotalSeconds)}{Colors.RESET}; " +
+                          $"Time: {Colors.YELLOW}{timer.Elapsed.TotalSeconds:F3}{Colors.RESET} s\n");
 
             return ClientStatusEnum.Success;
         }
+        */
 
-        internal int SendData(byte[] data, int size = 0, int usec = 100_000)
+        private int SendData(byte[] data, int size = 0, int microseconds = 100_000)
         {
-            if (data.Length == 0)
-                return 0;
-
             if (size == 0)
                 size = data.Length;
 
-            if (_socket.Poll(usec, SelectMode.SelectWrite))
-            {
-                return _socket.Send(data, size, SocketFlags.None);         
-            }
-            return 0;
+            return _socket.Poll(microseconds, SelectMode.SelectWrite)
+                ? _socket.Send(data, size, SocketFlags.None)
+                : 0;
         }
 
-        internal int GetData(out byte[]? data, int size = 0, int usec = 100_000)
+        private int GetData(byte[] buffer, int size = 0, int microseconds = 100_000)
         {
-            if (size == 0)
-                size = ClientConfig.ServingSize;    
+            if (!_socket.Poll(microseconds, SelectMode.SelectRead))
+                return 0;
             
-            var buffer = new byte[size];
-            data = null;
+            if(_socket.Available == 0)
+                throw new SocketException((int)SocketError.Disconnecting);
 
-            int read = 0;
-            if (_socket.Poll(usec, SelectMode.SelectRead))
-            {
-                if ((read = _socket.Receive(buffer, 0, size, SocketFlags.None)) != 0)
-                    data = buffer.AsSpan(0, read).ToArray();
-            }
-
-            return read;
+            return _socket.Receive(buffer, 0, 
+                size == 0 ? buffer.Length : size, SocketFlags.None);
         }
     }
 }

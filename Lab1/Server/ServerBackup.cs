@@ -7,18 +7,13 @@ using System.Threading.Tasks;
 
 namespace Server
 {
+    internal record LastOpData(string FilePath = "", string Ipv4 = "", 
+        bool HasCorruptedData = false, long CorruptedPos = 0, double Time = 0);
+    
     internal class ServerBackup
     {
-        internal string LastSentFilePath {  get; set; } = string.Empty;
+        internal LastOpData LastSendData { get; set; } = new LastOpData();
 
-        internal string LastReceivedFilePath { get; set; } = string.Empty;
-
-        internal bool IsDisconnected { get; set; }
-
-        internal bool HasCorruptedData { get; set; }
-
-        internal long CorruptedPos { get; set; }
-
-        internal IPAddress? ClientIp { get; set; }
+        internal LastOpData LastReceiveData { get; set; } = new LastOpData();
     }
 }
