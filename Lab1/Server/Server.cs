@@ -18,9 +18,9 @@ namespace Server
         private readonly ServerSettings _settings;
 
         private readonly ServerBackup _backup;
-        
-        private IPAddress? _clientIp; 
-        
+
+        private IPAddress? _clientIp;
+
         private bool _isConnected;
 
 
@@ -60,14 +60,14 @@ namespace Server
                     {
                         _isConnected = true;
                         Console.Write(
-                            $"The client is connected. Ip: {Colors.GREEN}{_clientIp}{Colors.RESET}\n> ");   
+                            $"The client is connected. Ip: {Colors.GREEN}{_clientIp}{Colors.RESET}\n> ");
                     }
                 }
                 else if (_isConnected && _clientSocket.Poll(0, SelectMode.SelectRead))
                 {
                     if (_clientSocket.Available != 0)
                     {
-                        ListenClient();   
+                        ClientHandler();
                     }
                     else
                     {
@@ -86,9 +86,17 @@ namespace Server
                         var commandParts = commandString.ToString().Split(' ');
                         var commandName = commandParts[0];
                         var commandValues = commandParts.Length > 1 ? commandParts.Skip(1).ToArray() : null;
-                        if (_commands.TryGetValue(commandName, out var serverCommand))
+                        if (commandName.StartsWith("ECHO"))
+                            Console.WriteLine($"{_backup.LastReceiveData.FilePath}" +
+                                              $"/{_backup.LastSendData.FilePath}");
+                        else if (commandName.StartsWith("TIME"))
+                            Console.WriteLine($"Current time: " +
+                                              $"{Colors.BLUE}{DateTime.Now.ToString(ServerConfig.DateFormat)}{Colors.RESET}");
+                        else if (commandName.StartsWith("CLOSE"))
                         {
-                            serverCommand.Execute(commandValues);
+                            _clientSocket.Close();
+                            _socket.Close();
+                            break;
                         }
                         else if (commandName.StartsWith("SETTING"))
                         {
@@ -116,13 +124,15 @@ namespace Server
                     }
                 }
             }
+            
+            return ServerStatusEnum.Success;
         }
 
-        private ServerStatusEnum ListenClient()
+        private ServerStatusEnum ClientHandler()
         {
             var res = ServerStatusEnum.Fail;
             var commandLengthBytes = new byte[sizeof(long)];
-            if (GetData(commandLengthBytes , sizeof(int), 200_000) != sizeof(int))
+            if (GetData(commandLengthBytes, sizeof(int), 200_000) != sizeof(int))
                 return res;
 
             var commandLength = BitConverter.ToInt32(commandLengthBytes);
@@ -140,15 +150,13 @@ namespace Server
 
             if (clientCommand.StartsWith("UPLOAD"))
                 res = ReceiveFile(filePath);
-            /*else if (clientCommand.StartsWith("DOWNLOAD"))
-                res = SendFile(filePath);*/
+            else if (clientCommand.StartsWith("DOWNLOAD"))
+                res = SendFile(filePath);
 
             if (res == ServerStatusEnum.Success)
                 Console.Write($"{Colors.BLUE}The file was successfully transferred{Colors.RESET}\n> ");
-            else if (res == ServerStatusEnum.Error)
-                Console.Write($"{Colors.RED}The file was not transferred{Colors.RESET}\n> ");
-            else if(res == ServerStatusEnum.LostConnection)
-                Console.Write($"{Colors.RED}Операция с файлом не была завершена полностью.{Colors.RESET}\n> ");
+            else if (res == ServerStatusEnum.LostConnection)
+                Console.Write($"{Colors.RED}Операция с файлом не была завершена полностью.{Colors.RESET}\n> "); //TODO поменять сообщение
 
             return res;
         }
@@ -157,26 +165,29 @@ namespace Server
         {
             var res = ServerStatusEnum.Fail;
             using var writer = new FileStream(filePath, FileMode.OpenOrCreate, FileAccess.Write);
-            
+
             var fileSizeBytes = new byte[sizeof(long)];
             if (GetData(fileSizeBytes, sizeof(long), 500_000) == 0)
                 return res;
-            
+
             var fileSize = BitConverter.ToInt64(fileSizeBytes);
             Console.WriteLine("File size: " + fileSize);
 
-            if (_backup.LastReceiveData.HasCorruptedData 
-                && _backup.LastReceiveData.FilePath.Equals(filePath))
+            var startPos = _backup.LastReceiveData.CorruptedPos;
+            if (_backup.LastReceiveData.HasCorruptedData
+                && _backup.LastReceiveData.FilePath.Equals(filePath)
+                && _backup.LastReceiveData.Ipv4 == _clientIp.ToString())
             {
                 if (SendData(BitConverter.GetBytes(_backup.LastReceiveData.CorruptedPos)) != 0)
                 {
-                    writer.Seek(_backup.LastReceiveData.CorruptedPos, SeekOrigin.Begin);
+                    writer.Seek(startPos, SeekOrigin.Begin);
                     Console.WriteLine($"Transfer was {Colors.BLUE}recovery{Colors.RESET} " +
-                                      $"from pos: {_backup.LastReceiveData.CorruptedPos}.");
+                                      $"from pos: {startPos}.");
                 }
             }
 
-            long bytesRead = _backup.LastReceiveData.CorruptedPos; int bytePortion;
+            var bytesRead = startPos;
+            int bytePortion;
             var fll = new FileLoadingLine(fileSize);
             var timer = new Stopwatch();
             try
@@ -191,10 +202,11 @@ namespace Server
                         bytesRead += bytePortion;
 
                         timer.Stop();
-                        fll.Report(bytesRead, timer.Elapsed.TotalSeconds);
+                        fll.Report(bytesRead, timer.Elapsed.TotalSeconds); //TODO fix time
                     }
                     else break;
                 }
+
                 res = ServerStatusEnum.Success;
             }
             catch (SocketException ex) when (ex.SocketErrorCode != SocketError.WouldBlock)
@@ -204,48 +216,44 @@ namespace Server
             }
             finally
             {
-                _backup.LastReceiveData = new(filePath, _clientIp.ToString(), 
-                    !_isConnected, bytesRead, timer.Elapsed.TotalSeconds);   
+                _backup.LastReceiveData = new(filePath, _clientIp.ToString(),
+                    !_isConnected, bytesRead, timer.Elapsed.TotalSeconds);
             }
-            
+
             Console.Write($"\r{Colors.GREEN}Success{Colors.RESET} sent " +
                           $"{Colors.GREEN}{bytesRead}{Colors.RESET}/{fileSize} Bytes; " +
-                          $"Speed: {Colors.BLUE}{FileLoadingLine.GetSpeed(bytesRead, timer.Elapsed.TotalSeconds)}{Colors.RESET}; " +
+                          $"Speed: {Colors.BLUE}{FileLoadingLine.GetSpeed(bytesRead - startPos, 
+                              timer.Elapsed.TotalSeconds)}{Colors.RESET}; " +
                           $"Time: {Colors.YELLOW}{timer.Elapsed.TotalSeconds:F3}{Colors.RESET} s\n");
 
             return res;
         }
 
-        /*private ServerStatusEnum SendFile(string filePath)
+        private ServerStatusEnum SendFile(string filePath)
         {
-            long bytesSent = 0;
+            var res = ServerStatusEnum.Fail;
             using var reader = new FileStream(filePath, FileMode.Open, FileAccess.Read);
             var fileSize = reader.Length;
 
-            SendData(BitConverter.GetBytes(fileSize));
-
             long startPos = 0;
-            if (_backup.HasCorruptedData && _backup.LastReceivedFilePath.Equals(filePath))
+            if (_backup.LastSendData.HasCorruptedData
+                && _backup.LastSendData.FilePath.Equals(filePath)
+                && _backup.LastSendData.Ipv4 == _clientIp.ToString())
             {
-                _backup.HasCorruptedData = false;
-                bytesSent = _backup.CorruptedPos;
+                startPos = _backup.LastSendData.CorruptedPos;
+                reader.Seek(startPos, SeekOrigin.Begin);
+                Console.WriteLine($"Transfer was {Colors.BLUE}recovery{Colors.RESET} " +
+                                  $"from pos: {startPos}.");
             }
-
-            if (SendData(BitConverter.GetBytes(startPos)) != 0)
-            {
-                reader.Seek(bytesSent, SeekOrigin.Begin);
-                if (bytesSent != 0)
-                    Console.WriteLine($"Transfer was {Colors.BLUE}recovery{Colors.RESET}.");
-            }
-
-            var buffer = new byte[ServerConfig.ServingSize];
-
+            
+            var fileSizeBytes = BitConverter.GetBytes(fileSize); var startPosBytes = BitConverter.GetBytes(startPos);
+            SendData(fileSizeBytes.Concat(startPosBytes).ToArray());
+            
+            var bytesSent = startPos; int bytePortion;
+            
             var fll = new FileLoadingLine(new FileInfo(filePath).Length);
             var timer = new Stopwatch();
-
-            int bytePortion;
-            
-            _backup.LastReceivedFilePath = filePath;
+            var buffer = new byte[ServerConfig.ServingSize];
             try
             {
                 while (true)
@@ -256,23 +264,31 @@ namespace Server
 
                     bytesSent += SendData(buffer, bytePortion, 400_000);
                     timer.Stop();
-                    fll.Report(bytesSent, timer.Elapsed.TotalSeconds);
+                    if (bytesSent == 0)
+                        throw new SocketException((int)SocketError.Disconnecting);
+                    
+                    fll.Report(bytesSent, timer.Elapsed.TotalSeconds); //TODO fix time
                 }
+                res = ServerStatusEnum.Success; 
             }
             catch (SocketException ex) when (ex.SocketErrorCode != SocketError.WouldBlock)
             {
-                _backup.HasCorruptedData = true;
-                _backup.CorruptedPos = bytesSent;
-                return ServerStatusEnum.LostConnection;
+                _isConnected = false;
+                res = ServerStatusEnum.LostConnection;
             }
-            
-            Console.Write($"\r{Colors.GREEN}Success{Colors.RESET} sent " +
+            finally
+            {
+                _backup.LastSendData = new(filePath, _clientIp.ToString(),
+                    !_isConnected, bytesSent, timer.Elapsed.TotalSeconds);
+            }
+
+            Console.Write($"\r{Colors.GREEN}Success{Colors.RESET} sent " + //TODO fix speed
                           $"{Colors.GREEN}{bytesSent}{Colors.RESET} Byte; " +
                           $"Speed: {Colors.BLUE}{FileLoadingLine.GetSpeed(bytesSent, timer.Elapsed.TotalSeconds)}{Colors.RESET}; " +
-                          $"Time: {Colors.YELLOW}{timer.Elapsed.TotalSeconds:F3}{Colors.RESET} s");
+                          $"Time: {Colors.YELLOW}{timer.Elapsed.TotalSeconds:F3}{Colors.RESET} s\n");
 
-            return ServerStatusEnum.Success;
-        }*/
+            return res;
+        }
 
         private int SendData(byte[] data, int size = 0, int microseconds = 100_000)
         {
@@ -288,11 +304,11 @@ namespace Server
         {
             if (!_clientSocket.Poll(microseconds, SelectMode.SelectRead))
                 return 0;
-            
-            if(_clientSocket.Available == 0)
+
+            if (_clientSocket.Available == 0)
                 throw new SocketException((int)SocketError.Disconnecting);
 
-            return _clientSocket.Receive(buffer, 0, 
+            return _clientSocket.Receive(buffer, 0,
                 size == 0 ? buffer.Length : size, SocketFlags.None);
         }
 
