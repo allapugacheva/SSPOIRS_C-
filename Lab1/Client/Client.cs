@@ -125,13 +125,10 @@ namespace Client
             if (parameters != null && parameters.Length > 0)
                 filePath = Path.Combine(_settings.CurrentDirectory, parameters[0]);
 
-            if (!File.Exists(filePath))
-                return res;
-
             var bytes = Encoding.Unicode.GetBytes($"{command} {Path.GetFileName(filePath)}");
             SendData(BitConverter.GetBytes(bytes.Length));
             SendData(bytes);
-            if (command.StartsWith("UPLOAD"))
+            if (command.StartsWith("UPLOAD") && File.Exists(filePath))
                 res = SendFile(filePath);
             else if (command.StartsWith("DOWNLOAD"))
                 res = ReceiveFile(filePath);

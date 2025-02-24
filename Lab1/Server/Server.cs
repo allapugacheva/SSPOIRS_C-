@@ -132,12 +132,12 @@ namespace Server
         {
             var res = ServerStatusEnum.Fail;
             var commandLengthBytes = new byte[sizeof(long)];
-            if (GetData(commandLengthBytes, sizeof(int), 200_000) != sizeof(int))
+            if (GetData(commandLengthBytes, sizeof(int), 500_000) != sizeof(int))
                 return res;
 
             var commandLength = BitConverter.ToInt32(commandLengthBytes);
             var commandBytes = new byte[commandLength];
-            if (GetData(commandBytes, commandLength, 200_000) != commandLength)
+            if (GetData(commandBytes, commandLength, 500_000) != commandLength)
                 return res;
 
             var clientCommand = Encoding.Unicode.GetString(commandBytes);
@@ -173,11 +173,11 @@ namespace Server
             var fileSize = BitConverter.ToInt64(fileSizeBytes);
             Console.WriteLine("File size: " + fileSize);
 
-            var startPos = _backup.LastReceiveData.CorruptedPos;
+            long startPos = 0;
             if (_backup.LastReceiveData.HasCorruptedData
-                && _backup.LastReceiveData.FilePath.Equals(filePath)
-                && _backup.LastReceiveData.Ipv4 == _clientIp.ToString())
+                && _backup.LastReceiveData.FilePath.Equals(filePath))
             {
+                startPos = _backup.LastReceiveData.CorruptedPos;
                 if (SendData(BitConverter.GetBytes(_backup.LastReceiveData.CorruptedPos)) != 0)
                 {
                     writer.Seek(startPos, SeekOrigin.Begin);
@@ -196,7 +196,7 @@ namespace Server
                 while (true)
                 {
                     timer.Start();
-                    if ((bytePortion = GetData(buffer, ServerConfig.ServingSize, 500_000)) != 0)
+                    if ((bytePortion = GetData(buffer, ServerConfig.ServingSize, 1_000_000)) != 0)
                     {
                         writer.Write(buffer, 0, bytePortion);
                         bytesRead += bytePortion;
@@ -222,7 +222,7 @@ namespace Server
 
             Console.Write($"\r{Colors.GREEN}Success{Colors.RESET} sent " +
                           $"{Colors.GREEN}{bytesRead}{Colors.RESET}/{fileSize} Bytes; " +
-                          $"Speed: {Colors.BLUE}{FileLoadingLine.GetSpeed(bytesRead - startPos, 
+                          $"Speed: {Colors.BLUE}{FileLoadingLine.GetSpeed(bytesRead, 
                               timer.Elapsed.TotalSeconds)}{Colors.RESET}; " +
                           $"Time: {Colors.YELLOW}{timer.Elapsed.TotalSeconds:F3}{Colors.RESET} s\n");
 
@@ -237,8 +237,7 @@ namespace Server
 
             long startPos = 0;
             if (_backup.LastSendData.HasCorruptedData
-                && _backup.LastSendData.FilePath.Equals(filePath)
-                && _backup.LastSendData.Ipv4 == _clientIp.ToString())
+                && _backup.LastSendData.FilePath.Equals(filePath))
             {
                 startPos = _backup.LastSendData.CorruptedPos;
                 reader.Seek(startPos, SeekOrigin.Begin);
