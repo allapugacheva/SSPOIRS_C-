@@ -4,3 +4,6 @@
 *.sln
 **.idea
 *.user
+**Release
+**out
+**linux

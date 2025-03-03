@@ -3,10 +3,14 @@ using System.IO;
 
 class Program
 {
-    static void Main()
+    static void Main(string[] args)
     {
-        string filePath = "10gb.bin";
         long fileSizeInBytes = 10L * 1024 * 1024 * 1024; // 10 ГБ
+        if(args.Length == 1)
+            fileSizeInBytes = long.Parse(args[0]) * 1024 * 1024;
+
+        string filePath = "test.bin";
+
         byte[] buffer = new byte[1024 * 1024]; // 1 МБ
 
         try

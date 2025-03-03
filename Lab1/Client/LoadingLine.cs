@@ -35,7 +35,9 @@
             AmountStages = BaseAmountStages;
         }
 
-        public void Report(long amountProcessedBytes, double second = 0)
+        public void Report(long amountProcessedBytes, 
+            double second = 0, 
+            long amountProcessedBytesPerTime = 0)
         {
             double newPercent = (double)amountProcessedBytes / _fileSize;
             double percentDifferent = (newPercent - _currentPercent) * 100.0;
@@ -58,7 +60,9 @@
             }
             Console.Write($"] {newPercent * 100.0:###0.00}");
             if (second != 0)
-                Console.Write($" {GetSpeed(amountProcessedBytes, second)}     ");
+                Console.Write($" {GetSpeed(
+                    amountProcessedBytesPerTime == 0 ? amountProcessedBytes : amountProcessedBytesPerTime, 
+                    second)}     ");
 
             Console.CursorVisible = true;
             _currentPercent = newPercent;
@@ -78,23 +82,23 @@
         {
             var bytePerSecond = processedByte / second;
             if (bytePerSecond < 100)
-                return $"{bytePerSecond:F2}Б/c";
+                return $"{bytePerSecond:F2}B/s";
 
             bytePerSecond /= 1024;
             if(bytePerSecond < 100)
-                return $"{bytePerSecond:F2}КБ/c";
+                return $"{bytePerSecond:F2}KB/s";
 
             bytePerSecond /= 1024;
             if (bytePerSecond < 100)
-                return $"{bytePerSecond:F2}МБ/c";
+                return $"{bytePerSecond:F2}MB/s";
 
             bytePerSecond /= 1024;
             if (bytePerSecond < 100)
-                return $"{bytePerSecond:F2}ГБ/c";
+                return $"{bytePerSecond:F2}GB/s";
 
             bytePerSecond /= 1024;
             if (bytePerSecond < 100)
-                return $"{bytePerSecond:F2}ТБ/c";
+                return $"{bytePerSecond:F2}TB/s";
 
             return "Fast";
         }

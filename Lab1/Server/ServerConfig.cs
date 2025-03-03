@@ -1,5 +1,4 @@
-﻿using ShellProgressBar;
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 
 namespace Server
 {
@@ -18,6 +17,10 @@ namespace Server
         internal const int RecoveryTryTIme = 5;
 
         internal const int CommandCapacity = 10;
+        
+        internal const int KeepAliveTime = 10;
+        internal const int KeepAliveInterval = 5;  
+        internal const int KeepAliveAttempts = 3; 
         internal static int MaxFileNameLength
         {
             get 
@@ -28,12 +31,5 @@ namespace Server
                 return 255 * 2;
             }
         }
-
-        internal static ProgressBarOptions pbOpiont = new()
-        {
-            ForegroundColor = ConsoleColor.Green,
-            BackgroundColor = ConsoleColor.DarkGray,
-            ProgressCharacter = '█' 
-        };
     }
 }

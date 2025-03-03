@@ -1,18 +1,24 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
+    <OutputType>Exe</OutputType>  
     <TargetFramework>net9.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-  </PropertyGroup>
 
-  <ItemGroup>
-    <PackageReference Include="ShellProgressBar" Version="5.2.0" />
-  </ItemGroup>
+    <!-- <RuntimeIdentifier>linux-x64</RuntimeIdentifier> 
+    <PublishSingleFile>true</PublishSingleFile>      
+    <SelfContained>true</SelfContained>              
+    <PublishTrimmed>true</PublishTrimmed>            
+    <ReadyToRun>true</ReadyToRun>                  
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile> 
+    <InvariantGlobalization>true</InvariantGlobalization> 
+    <DebugType>None</DebugType> 
 
-  <ItemGroup>
-    <Folder Include="Externsions\" />
-  </ItemGroup>
+    <PublishDir>./out/linux</PublishDir>
+
+ 
+    <UseAppHost>true</UseAppHost>-->
+  </PropertyGroup> 
 
 </Project>

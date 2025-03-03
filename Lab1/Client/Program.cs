@@ -15,7 +15,10 @@ class Program
         var status = client.Run();
         if(status == ClientStatusEnum.ConnectionError)
             Console.WriteLine($"{Colors.RED}Couldn't connect to the server{Colors.RESET}");
-
+        else if(status == ClientStatusEnum.LostConnection)
+            Console.WriteLine($"{Colors.RED}Lost connection with server{Colors.RESET}");
+        
+        Console.ReadLine();
         return 1;
     }
 }
