@@ -18,8 +18,9 @@ namespace Client
         
         private readonly Stopwatch _checkTimer;
 
-        private const double CheckTimeout = 30.0;
-
+        private bool IsDisconnected => _socket.Poll(0, SelectMode.SelectRead) 
+                                       && _socket.Available == 0;
+        
         
         internal TcpClient(IPAddress serverIp)
         {
@@ -61,6 +62,7 @@ namespace Client
             }
             catch (SocketException)
             {
+                Console.WriteLine("Penis");
                 return false;
             }
 
@@ -74,6 +76,7 @@ namespace Client
             {
                 if (!_isConnected)
                 {
+
                     if (!TryConnect())
                         return ClientStatusEnum.ConnectionError;
                     
@@ -120,7 +123,7 @@ namespace Client
                             Console.Write("\b \b");
                         }
                     }
-                    else
+                    else if (!char.IsControl(keyInfo.KeyChar) && !char.IsSurrogate(keyInfo.KeyChar))
                     {
                         commandString.Append(keyInfo.KeyChar);
                         Console.Write(keyInfo.KeyChar);
@@ -138,13 +141,18 @@ namespace Client
             if (parameters.Length > 0)
                 filePath = Path.Combine(_settings.CurrentDirectory, parameters[0]);
 
-            var bytes = Encoding.Unicode.GetBytes($"{command} {Path.GetFileName(filePath)}");
-            SendData(BitConverter.GetBytes(bytes.Length));
-            SendData(bytes);
+            var commandBytes = Encoding.Unicode.GetBytes($"{command} {Path.GetFileName(filePath)}");
+            var bytes = BitConverter.GetBytes(commandBytes.Length).Concat(commandBytes).ToArray();
             if (command.StartsWith("UPLOAD") && File.Exists(filePath))
+            {
+                SendData(bytes);
                 res = SendFile(filePath);
+            }
             else if (command.StartsWith("DOWNLOAD"))
+            {
+                SendData(bytes);
                 res = ReceiveFile(filePath);
+            }
             
             if (res == ClientStatusEnum.Success)
                 Console.WriteLine($"{Colors.BLUE}The file was successfully transferred{Colors.RESET}");
@@ -162,13 +170,14 @@ namespace Client
             var res = ClientStatusEnum.Success;
             using var reader = new FileStream(filePath, FileMode.Open, FileAccess.Read);
             var fileSize = reader.Length;
+			Console.WriteLine("File size: " + fileSize);
 
             SendData(BitConverter.GetBytes(fileSize));
 
             var startPosBytes = new byte[sizeof(long)];
             try
             {
-                while (GetData(startPosBytes, sizeof(long)) != sizeof(long)) ;
+                while (GetData(startPosBytes,+ sizeof(long)) != sizeof(long)) ;
             }
             catch (SocketException)
             {
@@ -246,10 +255,13 @@ namespace Client
             using var writer = new FileStream(filePath, FileMode.OpenOrCreate, FileAccess.Write);
             if (startPos != 0)
             {
+                startPos = writer.Length;
                 writer.Seek(startPos, SeekOrigin.Begin);
                 Console.WriteLine($"Transfer was {Colors.BLUE}recovery{Colors.RESET} " +
                                   $"from pos: {startPos}.");
             }
+            
+            SendData(BitConverter.GetBytes(startPos));
             
             var fll = new FileLoadingLine(fileSize);
             var timer = new Stopwatch();
@@ -315,8 +327,5 @@ namespace Client
             return _socket.Receive(buffer, 0,
                 size == 0 ? buffer.Length : size, SocketFlags.None);
         }
-
-        private bool IsDisconnected => _socket.Poll(0, SelectMode.SelectRead) 
-                                       && _socket.Available == 0;
     }
 }

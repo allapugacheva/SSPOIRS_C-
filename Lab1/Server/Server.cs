@@ -106,7 +106,7 @@ namespace Server
                             Console.Write("\b \b");
                         }
                     }
-                    else
+                    else if (!char.IsControl(keyInfo.KeyChar) && !char.IsSurrogate(keyInfo.KeyChar))
                     {
                         commandString.Append(keyInfo.KeyChar);
                         Console.Write(keyInfo.KeyChar);
@@ -126,7 +126,7 @@ namespace Server
 
             var commandLength = BitConverter.ToInt32(commandLengthBytes);
             var commandBytes = new byte[commandLength];
-            if (GetData(commandBytes, commandLength, 500_000) != commandLength)
+            if (GetData(commandBytes, commandLength, 15_000_000) != commandLength)
                 return res;
 
             var clientCommand = Encoding.Unicode.GetString(commandBytes);
@@ -174,7 +174,7 @@ namespace Server
             if (_backup.LastReceiveData.HasCorruptedData
                 && _backup.LastReceiveData.FilePath.Equals(filePath))
             {
-                startPos = _backup.LastReceiveData.CorruptedPos;
+                startPos = writer.Length;
                 if (startPos != 0)
                 {
                     writer.Seek(startPos, SeekOrigin.Begin);
@@ -230,8 +230,7 @@ namespace Server
         private ServerStatusEnum SendFile(string filePath)
         {
             var res = ServerStatusEnum.Fail;
-
-            double totalTime = 0;
+            
             FileStream? reader = null; long fileSize, startPos = 0;
             if (!Path.Exists(filePath))
                 fileSize = startPos = -1;
@@ -241,21 +240,29 @@ namespace Server
                 
                 if (_backup.LastSendData.HasCorruptedData
                     && _backup.LastSendData.FilePath.Equals(filePath))
-                {
-                    totalTime = _backup.LastSendData.Time;
                     startPos = _backup.LastSendData.CorruptedPos;
-                    reader.Seek(startPos, SeekOrigin.Begin);
-                    Console.WriteLine($"Transfer was {Colors.BLUE}recovery{Colors.RESET} " +
-                                      $"from pos: {startPos}.");
-                }
+                
                 fileSize = reader.Length;
             }
             
             var fileSizeBytes = BitConverter.GetBytes(fileSize); var startPosBytes = BitConverter.GetBytes(startPos);
             SendData(fileSizeBytes.Concat(startPosBytes).ToArray());
-
+            
+            try
+            {
+                while (GetData(startPosBytes, sizeof(long)) != sizeof(long));
+            }
+            catch (SocketException)
+            {
+                _isConnected = false;
+                return ServerStatusEnum.LostConnection;
+            }
+            
             if (reader == null)
                 return res;
+                        
+            startPos = BitConverter.ToInt64(startPosBytes);
+            reader.Seek(startPos, SeekOrigin.Begin);
             
             var bytesSent = startPos; int bytePortion;
             
@@ -286,7 +293,7 @@ namespace Server
             {
                 timer.Stop();
                 _backup.LastSendData = new(filePath, _clientIp.ToString(),
-                    !_isConnected, bytesSent, totalTime + timer.Elapsed.TotalSeconds);
+                    !_isConnected, bytesSent, timer.Elapsed.TotalSeconds);
             }
 
             Console.Write($"\r{Colors.GREEN}Success{Colors.RESET} sent " + 

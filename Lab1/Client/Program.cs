@@ -7,7 +7,7 @@ class Program
 {
     internal static int Main(string[] argv)
     {
-        IPAddress ip = ClientConfig.DefaultIp;
+        var ip = ClientConfig.DefaultIp;
         if(argv.Length != 0)
             ip = IPAddress.Parse(argv[0]);
 
