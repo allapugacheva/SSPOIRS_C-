@@ -2,11 +2,11 @@
 
 namespace Server
 {
-    internal class ServerSettings
+    public class ServerSettings
     {
-        internal string CurrentDirectory { get; private set; } = Directory.GetCurrentDirectory();
+        public string CurrentDirectory { get; private set; } = Directory.GetCurrentDirectory();
 
-        internal bool SetDir(string? dir = null)
+        public bool SetDir(string? dir = null)
         {
             if(string.IsNullOrEmpty(dir))
                 CurrentDirectory = Directory.GetCurrentDirectory();
@@ -20,7 +20,7 @@ namespace Server
 
         public override string ToString()
         {
-            return string.Format($"DIRECOTIRY: {CurrentDirectory}");
+            return string.Format($"DIRECTORY: {CurrentDirectory}");
         }
     }
 }

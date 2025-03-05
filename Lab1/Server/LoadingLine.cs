@@ -49,7 +49,7 @@ namespace Client
                 return;
 
             _amountInputStages += (byte)((newPercent * AmountStages) - _amountInputStages);
-
+            
             Console.CursorVisible = false;
             Console.Write("\r[");
             for (int i = 1; i <= _amountInputStages; i++)
@@ -61,11 +61,11 @@ namespace Client
             {
                 Console.Write(" ");
             }
-            Console.Write($"] {newPercent * 100.0:###0.00}");
+            Console.Write($"] {newPercent * 100.0:###0.00}%");
             if (second != 0)
                 Console.Write($" {GetSpeed(
                     amountProcessedBytesPerTime == 0 ? amountProcessedBytes : amountProcessedBytesPerTime, 
-                    second)}     ");
+                    second)}     \r");
 
             Console.CursorVisible = true;
             _currentPercent = newPercent;

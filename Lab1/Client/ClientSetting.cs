@@ -6,11 +6,11 @@ using System.Threading.Tasks;
 
 namespace Client
 {
-    internal class ClientSetting
+    public class ClientSetting
     {
-        internal string CurrentDirectory { get; private set; } = Directory.GetCurrentDirectory();
+        public string CurrentDirectory { get; private set; } = Directory.GetCurrentDirectory();
 
-        internal bool SetDir(string? dir = null)
+        public bool SetDir(string? dir = null)
         {
             if (string.IsNullOrEmpty(dir))
                 CurrentDirectory = Directory.GetCurrentDirectory();

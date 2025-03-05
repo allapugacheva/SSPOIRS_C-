@@ -7,13 +7,35 @@ using System.Threading.Tasks;
 
 namespace Server
 {
-    internal record LastOpData(string FilePath = "", string Ipv4 = "", 
-        bool HasCorruptedData = false, long CorruptedPos = 0, double Time = 0);
-    
-    internal class ServerBackup
+    public record LastOpData(
+        string filePath = "",
+        string ipV4 = "",
+        bool hasCorruptedData = false,
+        long corruptedPos = 0,
+        double time = 0)
     {
-        internal LastOpData LastSendData { get; set; } = new LastOpData();
+        public string FilePath { get; init; } = filePath;
 
-        internal LastOpData LastReceiveData { get; set; } = new LastOpData();
+        public string Ipv4 { get; init; } = ipV4;
+        
+        public bool HasCorruptedData { get; init; } = hasCorruptedData;
+
+        public long CorruptedPos { get; init; } = corruptedPos;
+
+        public double Time { get; init; } = time;
+
+        public bool CanRecovery(string filePath, string ipV4)
+        {
+            return HasCorruptedData
+                   && FilePath.Equals(filePath)
+                   && Ipv4 == ipV4;
+        }
+    }
+    
+    public class ServerBackup
+    {
+        internal LastOpData LastSendData { get; set; } = new();
+
+        internal LastOpData LastReceiveData { get; set; } = new();
     }
 }

@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace Server
 {
-    internal enum ServerStatusEnum : byte
+    public enum ServerStatusEnum : byte
     {
         Fail,
         Success,

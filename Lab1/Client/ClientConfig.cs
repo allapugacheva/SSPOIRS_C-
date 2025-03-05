@@ -4,19 +4,25 @@ using System.Runtime.InteropServices;
 
 namespace Client
 {
-    internal static class ClientConfig
+    public static class ClientConfig
     {
-        internal static IPAddress DefaultIp = IPAddress.Loopback;
+        public static IPAddress DefaultIp = IPAddress.Loopback;
 
-        internal static int DefaultPort = 8080;
+        public static int DefaultPort = 8080;
 
-        internal const int ServingSize = 64 * 1024;
+        public const int ServingSize = 64 * 1024;
         
-        internal const int KeepAliveTime = 10;
-        internal const int KeepAliveInterval = 5;  
-        internal const int KeepAliveAttempts = 3; 
+        public const int ReceiveBufferSize = 1024 * 1024 * 50;
+        
+        public const int SendBufferSize = 1024 * 1024 * 50;
+        
+        public const int KeepAliveTime = 10;
+        public const int KeepAliveInterval = 5;  
+        public const int KeepAliveAttempts = 3; 
 
-        internal static int MaxFileSize
+        
+        
+        public static int MaxFileSize
         {
             get
             {

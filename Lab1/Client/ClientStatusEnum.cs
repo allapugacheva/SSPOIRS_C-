@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace Client
 {
-    internal enum ClientStatusEnum : byte
+    public enum ClientStatusEnum : byte
     {
         Fail,
         Success,
