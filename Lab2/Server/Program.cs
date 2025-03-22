@@ -2,10 +2,10 @@
 
 class Program
 {
-    internal static async Task<int> Main()
+    internal static int Main()
     {
         var server = new UdpServer();  
-        await server.Run();
+        server.Run();
 
         return 1;
     }

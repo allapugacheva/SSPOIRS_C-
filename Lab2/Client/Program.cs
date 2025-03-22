@@ -11,8 +11,8 @@ class Program
         if(argv.Length != 0)
             ip = IPAddress.Parse(argv[0]);
 
-        var client = new UdpClient(ip);
-        var status = await client.Run();
+        var client = new UdpClient(ip); 
+        var status = client.Run();
         if(status == ClientStatusEnum.ConnectionError)
             Console.WriteLine($"{Colors.RED}Couldn't connect to the server{Colors.RESET}");
         else if(status == ClientStatusEnum.LostConnection)

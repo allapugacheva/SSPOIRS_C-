@@ -16,11 +16,13 @@ namespace Client
         
         public const int SendBufferSize = 1024 * 1024 * 10;
         
-        public const int KeepAliveTime = 10;
-        public const int KeepAliveInterval = 5;  
-        public const int KeepAliveAttempts = 3;
+        public const string DateFormat = "dd.MM.yyyy HH:mm";
+        
+        public const int KeepAliveInterval = 1000;
+        public const int KeepAliveTimeout = 1000;
+        public const int KeepAliveRetryCount = 10;
 
-        public const int WindowSize = 50;
+        public const int WindowSize = 60;
         
         public static int MaxFileSize
         {

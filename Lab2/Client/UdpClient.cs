@@ -1,23 +1,58 @@
 using System.Diagnostics;
-using System.Diagnostics.Tracing;
-using System.Drawing;
 using System.Net;
 using System.Net.Sockets;
-using System.Runtime.CompilerServices;
 using System.Text;
 
 namespace Client;
 
 public class UdpClient : Client
 {
+    private const string ConnectSignal = "CONNECT";
+
+    private const string AcceptSignal = "ACCEPT";
+
+    private readonly Stopwatch _timer = new Stopwatch();
+
+
     public UdpClient(IPAddress serverIp)
         : base(serverIp, SocketType.Dgram, ProtocolType.Udp)
     {
     }
 
-    public const string ConnectSignal = "CONNECT";
 
-    public const string AcceptSignal = "ACCEPT";
+    private bool KeepAlive()
+    {
+        if (Socket.Poll(0, SelectMode.SelectRead))
+        {
+            var bytes = new byte[Encoding.Unicode.GetByteCount("PING")];
+            Socket.ReceiveFrom(bytes, ref _serverAddress);
+
+            Socket.SendTo(Encoding.Unicode.GetBytes("PING"), _serverAddress);
+        }
+
+        if (_timer.Elapsed.TotalSeconds < 20.0)
+            return true;
+
+        while (!Socket.Poll(100, SelectMode.SelectWrite)) ;
+        Socket.SendTo(BitConverter.GetBytes(Encoding.Unicode.GetByteCount("PING"))
+            .Concat(Encoding.Unicode.GetBytes("PING")).ToArray(), _serverAddress);
+
+        for (var i = 0; i < ClientConfig.KeepAliveRetryCount; i++)
+        {
+            if (Socket.Poll(ClientConfig.KeepAliveTimeout * 1000, SelectMode.SelectRead))
+            {
+                var bytes = new byte[Encoding.Unicode.GetByteCount("PING")];
+                Socket.ReceiveFrom(bytes, ref _serverAddress);
+                _timer.Restart();
+                return true;
+            }
+
+            Thread.Sleep(ClientConfig.KeepAliveInterval);
+        }
+
+        return false;
+    }
+
 
     public bool TryConnect()
     {
@@ -36,20 +71,26 @@ public class UdpClient : Client
                 IsConnected = true;
         }
 
+        _timer.Start();
         return IsConnected;
     }
 
-    public async Task<ClientStatusEnum> Run()
+    public ClientStatusEnum Run()
     {
         if (!TryConnect())
             Console.WriteLine($"{Colors.RED}Failed to connect to server.{Colors.RESET}");
         else
             Console.Write($"{Colors.GREEN}Connected to server.{Colors.RESET}\n> ");
 
-
         var commandString = new StringBuilder();
-        while (true)
+        while (IsConnected)
         {
+            if (!KeepAlive())
+            {
+                IsConnected = false;
+                Console.WriteLine($"{Colors.RED}Disconnect from server.{Colors.RESET}");
+            }
+
             if (Console.KeyAvailable)
             {
                 var keyInfo = Console.ReadKey(true);
@@ -97,117 +138,221 @@ public class UdpClient : Client
 
     private ClientStatusEnum ServerHandler(string command, string[] parameters)
     {
-        var res = ClientStatusEnum.BadCommand;
-        var filePath = ".";
-        if (parameters.Length > 0)
-            filePath = Path.Combine(Settings.CurrentDirectory, parameters[0]);
-
-        var commandBytes = Encoding.Unicode.GetBytes($"{command} {Path.GetFileName(filePath)}");
-        var bytes = BitConverter.GetBytes(commandBytes.Length).Concat(commandBytes).ToArray();
-        if (command.StartsWith("UPLOAD") /*File.Exists(filePath)*/)
+        var res = ClientStatusEnum.Success;
+        if (command.StartsWith("TIME"))
         {
-            Socket.SendTo(bytes, _serverAddress);
-            SendFile(filePath);
+            while (!Socket.Poll(1000, SelectMode.SelectWrite)) ;
+            Socket.SendTo(BitConverter.GetBytes(Encoding.Unicode.GetByteCount("TIME"))
+                .Concat(Encoding.Unicode.GetBytes("TIME")).ToArray(), _serverAddress);
+
+            var timeBytes = new byte[Encoding.Unicode.GetByteCount(ClientConfig.DateFormat)];
+            while (!Socket.Poll(1000, SelectMode.SelectRead)) ;
+            Socket.ReceiveFrom(timeBytes, ref _serverAddress);
+
+            Console.WriteLine($"{Colors.BLUE}Server time: {Encoding.Unicode.GetString(timeBytes)}{Colors.RESET}");
         }
-        /*else if (command.StartsWith("DOWNLOAD"))
+        else if (command.StartsWith("ECHO"))
         {
-            SendData(bytes);
-            res = ReceiveFile(filePath);
-        }*/
+        }
+        else
+        {
+            var filePath = ".";
+            if (parameters.Length > 0)
+                filePath = Path.Combine(Settings.CurrentDirectory, parameters[0]);
 
-        return ClientStatusEnum.Success;
+            var commandBytes = Encoding.Unicode.GetBytes($"{command} {Path.GetFileName(filePath)}");
+            var bytes = BitConverter.GetBytes(commandBytes.Length).Concat(commandBytes).ToArray();
+            if (command.StartsWith("UPLOAD") /*File.Exists(filePath)*/)
+            {
+                Socket.SendTo(bytes, _serverAddress);
+                res = SendFile(filePath);
+            }
+            else if (command.StartsWith("DOWNLOAD"))
+            {
+                Socket.SendTo(bytes, _serverAddress);
+                res = ReceiveFile(filePath);
+            }
+        }
+
+        return res;
     }
 
-    protected ClientStatusEnum SendFile(string filePath)
+    private ClientStatusEnum SendFile(string filePath)
     {
-        if(!File.Exists(filePath))
+        if (!File.Exists(filePath))
             return ClientStatusEnum.Fail;
 
-        Console.WriteLine(filePath);
         using var stream = new FileStream(filePath, FileMode.Open);
         var fileSize = new FileInfo(filePath).Length;
         Console.WriteLine($"File size: {fileSize} Bytes");
-        
-        Socket.SendTo(BitConverter.GetBytes(fileSize), _serverAddress);
-        
-        var buffer = new byte[ClientConfig.ServingSize + sizeof(long)];
-        
-        var serverACKs = new List<long>(); var clientACKs = new List<long>();
-        var clientACK = 0L; var bytePortion = 0; 
-        var amountPackets = (long)Math.Ceiling(fileSize / (double)ClientConfig.ServingSize);
-        var currentAmount = 0L; var bytesSend = 0L;
 
-        Console.WriteLine("Amount packets: " + amountPackets);
+        Socket.SendTo(BitConverter.GetBytes(fileSize), _serverAddress);
+
+        var buffer = new byte[ClientConfig.ServingSize + sizeof(long)];
+
+        long startPos;
+        while (!Socket.Poll(1000, SelectMode.SelectRead)) ;
+        Socket.ReceiveFrom(buffer, sizeof(long), SocketFlags.None, ref _serverAddress);
+
+        startPos = BitConverter.ToInt64(buffer, 0);
+        if (startPos != 0)
+            Console.WriteLine($"Transfer was {Colors.BLUE}recovered{Colors.RESET} from pos: {startPos}");
+
+        stream.Seek(startPos, SeekOrigin.Begin);
+
+        var lastConfirmedACK = startPos;
+        var bytesSend = 0L;
+        var clientACK = lastConfirmedACK;
+        var bytePortion = 0;
+
+        var attemps = 0;
 
         var fll = new FileLoadingLine(fileSize);
-        var timer = new Stopwatch(); timer.Start();
-        while (true)
+        var timer = new Stopwatch();
+        timer.Start();
+        while (lastConfirmedACK != fileSize)
         {
-            if (clientACKs.Count < ClientConfig.WindowSize)
+            if (clientACK < lastConfirmedACK + ClientConfig.WindowSize * ClientConfig.ServingSize
+                && clientACK != -1L)
             {
                 if (Socket.Poll(50, SelectMode.SelectWrite))
                 {
-                    if (serverACKs.Count != 0)
-                    {
-                        clientACK = serverACKs[0]; 
-                        serverACKs.RemoveAt(0);
-                    }
-                    else
-                    {
-                        clientACK += bytePortion; 
-                    }
+                    bytePortion = stream.Read(buffer, sizeof(long), ClientConfig.ServingSize);
+                    clientACK += bytePortion;
+                    if (bytePortion == 0)
+                        clientACK = -1L;
 
-                    if (clientACK != fileSize)
-                    {
-                        stream.Seek(clientACK, SeekOrigin.Begin);
-                        bytePortion = stream.Read(buffer, sizeof(long), ClientConfig.ServingSize);
-                        BitConverter.GetBytes(clientACK).CopyTo(buffer, 0);
-                        clientACKs.Add(clientACK);
-                        Socket.SendTo(buffer, bytePortion + sizeof(long), SocketFlags.None, _serverAddress);
-                    }
+                    BitConverter.GetBytes(clientACK).CopyTo(buffer, 0);
+                    Socket.SendTo(buffer, bytePortion + sizeof(long), SocketFlags.None, _serverAddress);
                 }
             }
             else if (Socket.Poll(200_000, SelectMode.SelectRead))
             {
-                Socket.ReceiveFrom(buffer, ref _serverAddress);
-                var countServerACKs = BitConverter.ToInt32(buffer.AsSpan(0, sizeof(int)).ToArray());
-                
-                var temp = countServerACKs * sizeof(long);
+                Socket.ReceiveFrom(buffer, sizeof(long), SocketFlags.None, ref _serverAddress);
+                clientACK = lastConfirmedACK = BitConverter.ToInt32(buffer, 0);
+                stream.Seek(clientACK, SeekOrigin.Begin);
 
-                serverACKs.AddRange(Enumerable.Range(0, temp / sizeof(long))
-                    .Select(i => BitConverter.ToInt64(buffer, sizeof(int) + i * sizeof(long)))
-                    .ToList());
-                bytesSend += serverACKs.Count * ClientConfig.ServingSize;
-                currentAmount += serverACKs.Count;
-                Console.Write(serverACKs.Count + " " + currentAmount);
-                
-                serverACKs = clientACKs.Except(serverACKs).ToList();
-                Console.WriteLine(" " + serverACKs.Count + " " + bytesSend);
-                if (amountPackets <= currentAmount)
-                {
-                    Socket.SendTo(BitConverter.GetBytes(-1L), _serverAddress);
-                    break;
-                }
-
-                //fll.Report(bytesSend, timer.Elapsed.TotalSeconds);
-                clientACKs.Clear();
+                fll.Report(lastConfirmedACK, timer.Elapsed.TotalSeconds);
+                attemps = 0;
             }
             else
             {
-                serverACKs.Clear();
-                serverACKs.AddRange(clientACKs);
-                clientACKs.Clear();
+                if (attemps == 5 && !Socket.Poll(500_000, SelectMode.SelectRead))
+                {
+                    IsConnected = false;
+                    break;
+                }
+
+                attemps++;
+                clientACK = lastConfirmedACK;
+                stream.Seek(clientACK, SeekOrigin.Begin);
             }
         }
+
         timer.Stop();
 
         Console.Write($"\r{Colors.GREEN}Success{Colors.RESET} sent " +
-                      $"{Colors.GREEN}{bytesSend}{Colors.RESET}/{fileSize} Bytes; " +
-                      $"Speed: {Colors.BLUE}{FileLoadingLine.GetSpeed(bytesSend,
+                      $"{Colors.GREEN}{lastConfirmedACK}{Colors.RESET}/{fileSize} Bytes; " +
+                      $"Speed: {Colors.BLUE}{FileLoadingLine.GetSpeed(lastConfirmedACK,
                           timer.Elapsed.TotalSeconds)}{Colors.RESET}; " +
                       $"Time: {Colors.YELLOW}{timer.Elapsed.TotalSeconds:F3}{Colors.RESET} s\n");
 
-        return ClientStatusEnum.Success;
+        return IsConnected
+            ? ClientStatusEnum.Success
+            : ClientStatusEnum.LostConnection;
     }
 
+
+    private ClientStatusEnum ReceiveFile(string filePath)
+    {
+        FileStream? stream;
+
+        var fileInfoBytes = new byte[2 * sizeof(long)];
+        while (!Socket.Poll(50, SelectMode.SelectRead)) ;
+        Socket.ReceiveFrom(fileInfoBytes, SocketFlags.None, ref _serverAddress);
+
+        var fileSize = BitConverter.ToInt64(fileInfoBytes, 0);
+        Console.WriteLine($"File size: {fileSize} Bytes");
+
+        var startPos = BitConverter.ToInt64(fileInfoBytes, sizeof(long));
+
+        if (startPos == -1 && fileSize != -1)
+            return ClientStatusEnum.Fail;
+
+        if (startPos != 0)
+        {
+            stream = new FileStream(filePath, FileMode.Open, FileAccess.Write);
+            Console.WriteLine($"Transfer was {Colors.BLUE}recovered{Colors.RESET} from pos: {startPos}");
+        }
+        else
+        {
+            stream = new FileStream(filePath, FileMode.Create, FileAccess.Write);
+        }
+
+        stream.Seek(startPos, SeekOrigin.Begin);
+
+        var buffer = new byte[ClientConfig.ServingSize + sizeof(long)];
+        var bytePortion = 0;
+        var confirmedAck = new List<long>();
+
+        var fll = new FileLoadingLine(fileSize);
+        var timer = new Stopwatch();
+        timer.Start();
+        var clientACK = 0L;
+        var lastConfirmedACK = startPos;
+
+        var attemps = 0;
+        while (lastConfirmedACK != fileSize)
+        {
+            if (Socket.Poll(50_000, SelectMode.SelectRead))
+            {
+                bytePortion = Socket.ReceiveFrom(buffer, buffer.Length, SocketFlags.None, ref _serverAddress) -
+                              sizeof(long);
+
+                clientACK = BitConverter.ToInt64(buffer, 0);
+                if (clientACK == -1L)
+                    continue;
+
+                confirmedAck.Add(clientACK);
+
+                stream.Seek(clientACK - bytePortion, SeekOrigin.Begin);
+                stream.Write(buffer, sizeof(long), bytePortion);
+                attemps = 0;
+            }
+            else if (confirmedAck.Count != 0)
+            {
+                confirmedAck = confirmedAck.Distinct().OrderBy(ack => ack).ToList();
+
+                for (var i = 0; i < confirmedAck.Count - 1; i++)
+                {
+                    if (confirmedAck[i + 1] - confirmedAck[i] <= ClientConfig.ServingSize)
+                        lastConfirmedACK = confirmedAck[i + 1];
+                    else break;
+                }
+
+                Socket.SendTo(BitConverter.GetBytes(lastConfirmedACK), _serverAddress);
+
+                fll.Report(lastConfirmedACK, timer.Elapsed.TotalSeconds);
+                confirmedAck.Clear();
+            }
+            else if (++attemps == 20)
+            {
+                IsConnected = true;
+                break;
+            }
+        }
+
+        timer.Stop();
+        stream.Close();
+
+        Console.Write($"\r{Colors.GREEN}Success{Colors.RESET} sent " +
+                      $"{Colors.GREEN}{lastConfirmedACK}{Colors.RESET}/{fileSize} Bytes; " +
+                      $"Speed: {Colors.BLUE}{FileLoadingLine.GetSpeed(lastConfirmedACK,
+                          timer.Elapsed.TotalSeconds)}{Colors.RESET}; " +
+                      $"Time: {Colors.YELLOW}{timer.Elapsed.TotalSeconds:F3}{Colors.RESET} s\n");
+
+        return IsConnected
+            ? ClientStatusEnum.Success
+            : ClientStatusEnum.LostConnection;
+    }
 }

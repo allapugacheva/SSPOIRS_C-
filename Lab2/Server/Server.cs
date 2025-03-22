@@ -37,41 +37,6 @@ public abstract class Server
     
     //__ Base methods __
     
-    protected IPAddress? ConnectClient()
-    {
-        ClientSocket = Socket.Accept();
-        ClientSocket.Blocking = false;
-        ClientSocket.SendBufferSize = ServerConfig.SendBufferSize;
-        ClientSocket.ReceiveBufferSize = ServerConfig.ReceiveBufferSize;    
-
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-        {
-            var keepAliveValues = new byte[12];
-            BitConverter.GetBytes(1).CopyTo(keepAliveValues, 0);  
-            BitConverter.GetBytes(10_000).CopyTo(keepAliveValues, 4); //10 s
-            BitConverter.GetBytes(5_000).CopyTo(keepAliveValues, 8);   //5 s
-                
-            ClientSocket.IOControl(IOControlCode.KeepAliveValues, keepAliveValues, null);
-        }
-        else if(RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-        {
-            ClientSocket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
-
-            ClientSocket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveTime,
-                ServerConfig.KeepAliveTime);
-            ClientSocket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveInterval,
-                ServerConfig.KeepAliveInterval);
-            ClientSocket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveRetryCount, 
-                ServerConfig.KeepAliveAttempts);
-        }
-            
-        var clientIp = (IPEndPoint?)ClientSocket.RemoteEndPoint;
-        if(clientIp != null)
-            IsConnected = true;
-        
-        return clientIp?.Address;
-    }
-    
     private bool IsDisconnected => ClientSocket.Poll(0, SelectMode.SelectRead) 
                                    && ClientSocket.Available == 0;
     
