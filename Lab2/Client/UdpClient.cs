@@ -153,6 +153,19 @@ public class UdpClient : Client
         }
         else if (command.StartsWith("ECHO"))
         {
+            var filePath = "";
+            if (parameters.Length > 0)
+                filePath = parameters[0];
+            
+            while (!Socket.Poll(1000, SelectMode.SelectWrite)) ;
+            Socket.SendTo(BitConverter.GetBytes(Encoding.Unicode.GetByteCount("ECHO " + filePath))
+                .Concat(Encoding.Unicode.GetBytes("ECHO " + filePath)).ToArray(), _serverAddress);
+
+            var timeBytes = new byte[Encoding.Unicode.GetByteCount(filePath)];
+            while (!Socket.Poll(1000, SelectMode.SelectRead)) ;
+            Socket.ReceiveFrom(timeBytes, ref _serverAddress);
+
+            Console.WriteLine($"{Encoding.Unicode.GetString(timeBytes)}");
         }
         else
         {
@@ -162,7 +175,7 @@ public class UdpClient : Client
 
             var commandBytes = Encoding.Unicode.GetBytes($"{command} {Path.GetFileName(filePath)}");
             var bytes = BitConverter.GetBytes(commandBytes.Length).Concat(commandBytes).ToArray();
-            if (command.StartsWith("UPLOAD") /*File.Exists(filePath)*/)
+            if (command.StartsWith("UPLOAD") && File.Exists(filePath))
             {
                 Socket.SendTo(bytes, _serverAddress);
                 res = SendFile(filePath);
@@ -195,7 +208,7 @@ public class UdpClient : Client
         Socket.ReceiveFrom(buffer, sizeof(long), SocketFlags.None, ref _serverAddress);
 
         startPos = BitConverter.ToInt64(buffer, 0);
-        if (startPos != 0)
+        if (startPos != 0L)
             Console.WriteLine($"Transfer was {Colors.BLUE}recovered{Colors.RESET} from pos: {startPos}");
 
         stream.Seek(startPos, SeekOrigin.Begin);
@@ -226,12 +239,12 @@ public class UdpClient : Client
                     Socket.SendTo(buffer, bytePortion + sizeof(long), SocketFlags.None, _serverAddress);
                 }
             }
-            else if (Socket.Poll(200_000, SelectMode.SelectRead))
+            else if (Socket.Poll(2_000_000, SelectMode.SelectRead))
             {
                 Socket.ReceiveFrom(buffer, sizeof(long), SocketFlags.None, ref _serverAddress);
                 clientACK = lastConfirmedACK = BitConverter.ToInt32(buffer, 0);
                 stream.Seek(clientACK, SeekOrigin.Begin);
-
+                
                 fll.Report(lastConfirmedACK, timer.Elapsed.TotalSeconds);
                 attemps = 0;
             }
@@ -268,18 +281,23 @@ public class UdpClient : Client
         FileStream? stream;
 
         var fileInfoBytes = new byte[2 * sizeof(long)];
-        while (!Socket.Poll(50, SelectMode.SelectRead)) ;
-        Socket.ReceiveFrom(fileInfoBytes, SocketFlags.None, ref _serverAddress);
+        while (!Socket.Poll(1000, SelectMode.SelectRead)) ;
+        Socket.ReceiveFrom(fileInfoBytes, 2 * sizeof(long), SocketFlags.None, ref _serverAddress);
 
         var fileSize = BitConverter.ToInt64(fileInfoBytes, 0);
         Console.WriteLine($"File size: {fileSize} Bytes");
 
         var startPos = BitConverter.ToInt64(fileInfoBytes, sizeof(long));
 
-        if (startPos == -1 && fileSize != -1)
+        Console.WriteLine(startPos + " " + fileSize);
+        
+        if (startPos == -1L && fileSize != -1L)
+        {
+            Console.WriteLine($"File don't exists: {Colors.RED}{filePath} Bytes{Colors.RESET}");
             return ClientStatusEnum.Fail;
+        }
 
-        if (startPos != 0)
+        if (startPos != 0L)
         {
             stream = new FileStream(filePath, FileMode.Open, FileAccess.Write);
             Console.WriteLine($"Transfer was {Colors.BLUE}recovered{Colors.RESET} from pos: {startPos}");
@@ -304,14 +322,19 @@ public class UdpClient : Client
         var attemps = 0;
         while (lastConfirmedACK != fileSize)
         {
-            if (Socket.Poll(50_000, SelectMode.SelectRead))
+            if (Socket.Poll(100_000, SelectMode.SelectRead))
             {
                 bytePortion = Socket.ReceiveFrom(buffer, buffer.Length, SocketFlags.None, ref _serverAddress) -
                               sizeof(long);
 
                 clientACK = BitConverter.ToInt64(buffer, 0);
                 if (clientACK == -1L)
+                {
+                    if (confirmedAck.Count == 0)
+                        break;
+                        
                     continue;
+                }
 
                 confirmedAck.Add(clientACK);
 
@@ -331,7 +354,7 @@ public class UdpClient : Client
                 }
 
                 Socket.SendTo(BitConverter.GetBytes(lastConfirmedACK), _serverAddress);
-
+                
                 fll.Report(lastConfirmedACK, timer.Elapsed.TotalSeconds);
                 confirmedAck.Clear();
             }

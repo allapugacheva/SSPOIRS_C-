@@ -48,7 +48,7 @@ public class UdpServer : Server
         public ServerStatusEnum Run()
         {
             Console.Write($"{Colors.GREEN}Server is start.{Colors.RESET}\n> ");
-
+            
             var commandString = new StringBuilder(50);
             while (true)
             {
@@ -83,9 +83,11 @@ public class UdpServer : Server
                         Socket.SendBufferSize = ServerConfig.SendBufferSize;
                         _timer.Start();
                     }
-                    else if(ClientHandler() == ServerStatusEnum.LostConnection)
+                    else 
                     {
-                        IsConnected = false;
+                        var clientRes = ClientHandler();
+                        if (clientRes == ServerStatusEnum.LostConnection)
+                            IsConnected = false;
                     }
                         
                 }
@@ -123,6 +125,8 @@ public class UdpServer : Server
                     }
                 }
             }
+
+           
             
             return ServerStatusEnum.Success;
         }
@@ -148,27 +152,35 @@ public class UdpServer : Server
             }
             else if (clientCommand.StartsWith("ECHO"))
             {
+                var parameters = clientCommand.Split(' ').Skip(1).ToArray();
+                var str = "";
+                if (parameters.Length != 0)
+                {
+                    str = parameters[0];
+                }
                 
+                while (!Socket.Poll(1000, SelectMode.SelectWrite)) ;
+                Socket.SendTo(Encoding.Unicode.GetBytes(str), _clientIp);
             }
             else
             {
                 var parameters = clientCommand.Split(' ').Skip(1).ToArray();
                 if (parameters.Length == 0)
                     return ServerStatusEnum.Fail;
-
+                
                 var filePath = Path.Combine(Settings.CurrentDirectory, Path.GetFileName(parameters[0]));
                 
                 if (clientCommand.StartsWith("UPLOAD"))
                     res = ReceiveFile(filePath);
                 else if (clientCommand.StartsWith("DOWNLOAD"))
                     res = SendFile(filePath);
-            
+                
                 if (res == ServerStatusEnum.Success)
                     Console.Write($"{Colors.BLUE}The file was successfully transferred{Colors.RESET}\n> ");
                 else if (res == ServerStatusEnum.LostConnection)
                     Console.Write($"{Colors.RED}The file operation was not completed completely.{Colors.RESET}\n> ");   
             }
-
+            
             return res;
         }
 
@@ -215,7 +227,12 @@ public class UdpServer : Server
                     
                     clientACK = BitConverter.ToInt64(buffer, 0);
                     if (clientACK == -1L)
+                    {
+                        if (confirmedAck.Count == 0)
+                            break;
+                        
                         continue;
+                    }
                     
                     confirmedAck.Add(clientACK);
 
@@ -235,7 +252,7 @@ public class UdpServer : Server
                     }
 
                     Socket.SendTo(BitConverter.GetBytes(lastConfirmedACK), _clientIp);
-
+                    
                     fll.Report(lastConfirmedACK, timer.Elapsed.TotalSeconds);
                     confirmedAck.Clear();
                 }
@@ -256,6 +273,11 @@ public class UdpServer : Server
                           $"Speed: {Colors.BLUE}{FileLoadingLine.GetSpeed(lastConfirmedACK,
                               timer.Elapsed.TotalSeconds)}{Colors.RESET}; " +
                           $"Time: {Colors.YELLOW}{timer.Elapsed.TotalSeconds:F3}{Colors.RESET} s\n");
+
+            while (Socket.Available > 0)
+            {
+                Socket.ReceiveFrom(buffer, SocketFlags.None, ref _clientIp);
+            }
             
             return !IsDisconected 
                 ? ServerStatusEnum.Success 
@@ -264,20 +286,24 @@ public class UdpServer : Server
         
     private ServerStatusEnum SendFile(string filePath)
     {
-        var fileSize = 0L; var startPos = 0L; 
-        using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read);
+        long fileSize = 0; long startPos = 0;
+        FileStream? stream = null;
+
         if (!File.Exists(filePath))
-            fileSize = startPos = -1L;
+            fileSize = startPos = -1;
         else
         {
+            stream = new FileStream(filePath, FileMode.Open, FileAccess.Read);
             if(Backup.LastSendData.CanRecovery(filePath, _clientIp.ToString().Split(':')[0]))
                 startPos = Backup.LastSendData.CorruptedPos;
+
+            Console.WriteLine("start pos " + startPos);
             
             fileSize = stream.Length;
         }
         
-        Socket.SendTo(BitConverter.GetBytes(fileSize), _clientIp);
-        if (fileSize == -1)
+        Socket.SendTo(BitConverter.GetBytes(fileSize).Concat(BitConverter.GetBytes(startPos)).ToArray(), _clientIp);
+        if (stream == null)
             return ServerStatusEnum.Fail;
         
         Console.WriteLine($"File size: {fileSize} Bytes");
@@ -313,12 +339,12 @@ public class UdpServer : Server
                     Socket.SendTo(buffer, bytePortion + sizeof(long), SocketFlags.None, _clientIp);
                 }
             }
-            else if (Socket.Poll(200_000, SelectMode.SelectRead))
+            else if (Socket.Poll(2_000_000, SelectMode.SelectRead))
             {
                 Socket.ReceiveFrom(buffer, sizeof(long), SocketFlags.None, ref _clientIp);
                 clientACK = lastConfirmedACK = BitConverter.ToInt32(buffer, 0);
                 stream.Seek(clientACK, SeekOrigin.Begin);
-
+                
                 fll.Report(lastConfirmedACK, timer.Elapsed.TotalSeconds);
                 attemps = 0;
             }
@@ -326,7 +352,7 @@ public class UdpServer : Server
             {
                 if (attemps == 5 && !Socket.Poll(500_000, SelectMode.SelectRead))
                 {
-                    IsDisconected = true;
+                    IsConnected = false;
                     break;
                 }
 
@@ -340,6 +366,7 @@ public class UdpServer : Server
             IsDisconected, lastConfirmedACK, timer.Elapsed.TotalSeconds);
         
         timer.Stop();
+        stream.Close();
 
         Console.Write($"\r{Colors.GREEN}Success{Colors.RESET} sent " +
                       $"{Colors.GREEN}{lastConfirmedACK}{Colors.RESET}/{fileSize} Bytes; " +
