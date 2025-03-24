@@ -12,7 +12,6 @@ public abstract class Server
 
     protected ServerSettings Settings { get; }
     
-    
     protected Server(SocketType socketType, ProtocolType protocolType)
     {
         Socket = new Socket(AddressFamily.InterNetwork, socketType, protocolType);
@@ -23,17 +22,11 @@ public abstract class Server
         Settings = new ServerSettings();
     }
     
-    //__ Need to overriding methods __
-    
     public abstract void Run();
-    
-    
-    //__ Base methods __
     
     protected IPAddress? ConnectClient()
     {
-        Socket newClient;
-        newClient = Socket.Accept();
+        var newClient = Socket.Accept();
         newClient.Blocking = false;
         newClient.SendBufferSize = ServerConfig.SendBufferSize;
         newClient.ReceiveBufferSize = ServerConfig.ReceiveBufferSize;    
@@ -42,8 +35,8 @@ public abstract class Server
         {
             var keepAliveValues = new byte[12];
             BitConverter.GetBytes(1).CopyTo(keepAliveValues, 0);  
-            BitConverter.GetBytes(10_000).CopyTo(keepAliveValues, 4); //10 s
-            BitConverter.GetBytes(5_000).CopyTo(keepAliveValues, 8);   //5 s
+            BitConverter.GetBytes(10_000).CopyTo(keepAliveValues, 4); 
+            BitConverter.GetBytes(5_000).CopyTo(keepAliveValues, 8);   
                 
             newClient.IOControl(IOControlCode.KeepAliveValues, keepAliveValues, null);
         }
@@ -51,64 +44,60 @@ public abstract class Server
         {
             newClient.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
 
-            newClient.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveTime,
-                ServerConfig.KeepAliveTime);
-            newClient.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveInterval,
-                ServerConfig.KeepAliveInterval);
+            newClient.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveTime, 
+                                        ServerConfig.KeepAliveTime);
+            newClient.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveInterval, 
+                                        ServerConfig.KeepAliveInterval);
             newClient.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveRetryCount, 
-                ServerConfig.KeepAliveAttempts);
+                                        ServerConfig.KeepAliveAttempts);
         }
             
         var clientIp = (IPEndPoint?)newClient.RemoteEndPoint;
-        if(clientIp != null) 
-        {
-            ClientOperationContext? client = Clients.FirstOrDefault(c => c.ClientIp.Equals(clientIp.Address));
+        var client = Clients.FirstOrDefault(c => c.ClientIp.Equals(clientIp?.Address) 
+                                                && c.ClientSocket == null);
 
-            if (client != null)
-            {
-                client.ClientSocket = newClient;
-                client.IsConnected = true;
-            }
-            else
-            {
-                Clients.Add(new ClientOperationContext(newClient, new ServerBackup(), clientIp.Address, true));
-            }
+        if (client != null)
+        {
+            client.ClientSocket = newClient;
+            client.IsConnected = true;
         }
-        
+        else
+            Clients.Add(new ClientOperationContext(newClient));
+
         return clientIp?.Address;
     }
     
-    private bool IsDisconnected(Socket ClientSocket) => ClientSocket.Poll(0, SelectMode.SelectRead) 
-                                   && ClientSocket.Available == 0;
+    private bool IsDisconnected(Socket clientSocket) => clientSocket.Poll(0, SelectMode.SelectRead) 
+                                                            && clientSocket.Available == 0;
     
-    protected int SendData(ClientOperationContext Client, byte[] data, int size = 0, int microseconds = 100_000)
+    protected int SendData(ClientOperationContext client, byte[] data, int size = 0, int microseconds = 100_000)
     {
         if (size == 0)
             size = data.Length;
 
-        if (IsDisconnected(Client.ClientSocket))
+        if (IsDisconnected(client.ClientSocket))
         {
-            Client.IsConnected = false;
+            client.IsConnected = false;
             throw new SocketException((int)SocketError.Disconnecting);
         }
 
-        return Client.ClientSocket.Poll(microseconds, SelectMode.SelectWrite)
-            ? Client.ClientSocket.Send(data, size, SocketFlags.None)
+        return client.ClientSocket.Poll(microseconds, SelectMode.SelectWrite)
+            ? client.ClientSocket.Send(data, size, SocketFlags.None)
             : 0;
     }
 
-    protected int GetData(ClientOperationContext Client, byte[] buffer, int size = 0, int microseconds = 100_000)
+    protected int GetData(ClientOperationContext client, byte[] buffer, int size = 0, int microseconds = 100_000)
     {
-        if (!Client.ClientSocket.Poll(microseconds, SelectMode.SelectRead))
+        if (!client.ClientSocket.Poll(microseconds, SelectMode.SelectRead))
             return 0;
 
-        if (Client.ClientSocket.Available == 0)
+        if (client.ClientSocket.Available == 0)
         {
-            Client.IsConnected = false;
+            client.IsConnected = false;
             throw new SocketException((int)SocketError.Disconnecting);
         }
 
-        return Client.ClientSocket.Receive(buffer, 0,
+        return client.ClientSocket.Receive(buffer, 0,
             size == 0 ? buffer.Length : size, SocketFlags.None);
     }
 }

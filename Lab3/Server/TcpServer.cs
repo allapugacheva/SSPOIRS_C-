@@ -13,205 +13,213 @@ namespace Server
 
         public override void Run()
         {
-            Console.Write($"{Colors.GREEN}Server is start.{Colors.RESET}\n> ");
+            Console.WriteLine($"{Colors.GREEN}Server is start.{Colors.RESET}");
 
             while (true)
             {
 
                 if (Socket.Poll(0, SelectMode.SelectRead))
                 {
-                    if (ConnectClient() != null)
-                        Console.Write($"Client connected. Ip: {Colors.GREEN}{Clients[^1].ClientIp}{Colors.RESET}\n> ");
+                    IPAddress? ip;
+                    if ((ip = ConnectClient()) != null)
+                        Console.WriteLine($"Client {Colors.YELLOW}{ip.ToString()} {Colors.GREEN}connected{Colors.RESET}.");
                 }
-                
+
                 for (int i = 0; i < Clients.Count; i++) {
                 
-                    if (Clients[i].IsConnected) 
-                    {
+                    if (Clients[i].CanMakeStep())
                         MakeStep(Clients[i]);
-                    }
                     
-                    if(!Clients[i].IsConnected && Clients[i].ClientSocket != null)
+                    if (Clients[i].IsDisconnected())
                     {
-                        Console.Write($"Client disconnected. Ip: {Colors.RED}{Clients[i].ClientIp}{Colors.RESET}\n> ");
-                        Clients[i].ClientSocket = null;
+                        Console.WriteLine($"Client {Colors.YELLOW}{Clients[i].ClientIp} {Colors.RED}disconnected{Colors.RESET}.");
+                        if (Clients[i].Backup.AnyBackup())
+                        {
+                            Clients[i].ClientSocket.Close();                       
+                            Clients[i].ClientSocket = null;
+                        }
+                        else
+                            Clients.RemoveAt(i--);
                     }
                 }
             }
         }
 
-        private void MakeStep(ClientOperationContext Client) {
-
-            try {
-                switch (Client.Step)
-                {
-                    case 0: {
-
-                        var commandLengthBytes = new byte[sizeof(int)];
-                        if (GetData(Client, commandLengthBytes, sizeof(int), 15_000_000) != sizeof(int))
-                            return;
-
-                        var commandLength = BitConverter.ToInt32(commandLengthBytes);
-                        var commandBytes = new byte[commandLength];
-                        if (GetData(Client, commandBytes, commandLength, 15_000_000) != commandLength)
-                            return;
-
-                        Client.Command = Encoding.Unicode.GetString(commandBytes);
-
-                        var parameters = Client.Command.Split(' ').Skip(1).ToArray();
-                        if (parameters.Length == 0 && !Client.Command.Equals("TIME"))
-                            return;
-
-                        if (Client.Command.StartsWith("UPLOAD") || Client.Command.StartsWith("DOWNLOAD"))
-                            Client.FilePath = Path.GetFileName(parameters[0]);
-
-                        if (Client.Command.StartsWith("UPLOAD"))
-                            Client.Step = 1;
-                        else if (Client.Command.StartsWith("DOWNLOAD"))
-                            Client.Step = 3;
-                        else if (Client.Command.Equals("TIME"))
-                            Client.Step = 5;
-                        else if (Client.Command.StartsWith("ECHO"))
-                            Client.Step = 6;
-
-                        break;
-                    }
-                    case 1: {
-                        
-                        Client.File = null;
-                        var fileSizeBytes = new byte[sizeof(long)];
-                        while (GetData(Client, fileSizeBytes, sizeof(long)) != sizeof(long)); 
-                        
-                        Client.FileSize = BitConverter.ToInt64(fileSizeBytes);
-
-                        Client.StartPos = 0;
-                        if (Client.Backup.LastReceiveData.CanRecovery(Client.FilePath, Client.ClientIp.ToString()))
-                        {
-                            Client.File = new FileStream(Client.FilePath, FileMode.Open, FileAccess.Write);
-                            Client.StartPos = Client.Backup.LastReceiveData.CorruptedPos;
-                            Client.File.Seek(Client.StartPos, SeekOrigin.Begin);
-                        }
-                        else
-                        {
-                            Client.File = new FileStream(Client.FilePath, FileMode.Create, FileAccess.Write);
-                        }
-                        
-                        Client.Backup.LastReceiveData = new LastOpData(Client.FilePath, Client.ClientIp.ToString(), 0);
-                        
-                        SendData(Client, BitConverter.GetBytes(Client.StartPos), sizeof(long));
-                        
-                        Client.Step = 2;
-                        Client.BytesRead = Client.StartPos;
-
-                        break;
-                    }
-                    case 2: {
-
-                        int bytePortion;
-                        var buffer = new byte[ServerConfig.ServingSize];
-                        if ((bytePortion = GetData(Client, buffer, ServerConfig.ServingSize, 500_000)) != 0)
-                        {
-                            Client.File?.Write(buffer, 0, bytePortion);
-                            Client.BytesRead += bytePortion;
-                        }
-                        if (Client.BytesRead >= Client.FileSize) {
-                            Client.Step = 0;
-                            Client.File?.Close();
-                            Console.Write($"{Colors.BLUE}File successfully transferred for {Colors.GREEN}{Client.ClientIp}{Colors.RESET}\n> ");
-                        }
-
-                        break;
-                    }
-                    case 3: {
-
-                        Client.File = null;
-                        Client.StartPos = 0;
-                        if (!Path.Exists(Client.FilePath))
-                            Client.FileSize = Client.StartPos = -1;
-                        else
-                        {
-                            Client.File = new FileStream(Client.FilePath, FileMode.Open, FileAccess.Read);
-
-                            if (Client.Backup.LastSendData.CanRecovery(Client.FilePath, Client.ClientIp.ToString()))
-                            {
-                                Client.StartPos = Client.Backup.LastSendData.CorruptedPos;
-                                Client.File.Seek(Client.StartPos, SeekOrigin.Begin);
-                            }
-                            Client.FileSize = Client.File.Length;
-                        }
-                        
-                        Client.Backup.LastSendData = new LastOpData(Client.FilePath, Client.ClientIp.ToString(), 0);
-                        
-                        var fileSizeBytes = BitConverter.GetBytes(Client.FileSize); var startPosBytes = BitConverter.GetBytes(Client.StartPos);
-                        while (SendData(Client, fileSizeBytes.Concat(startPosBytes).ToArray(), 2 * sizeof(long)) == 0);
-                        
-                        if((Client.FileSize == -1 && Client.StartPos == -1) || Client.File == null) {
-                            Client.Step = 0;
-                            Console.Write($"{Colors.RED}File operation failed for {Colors.GREEN}{Client.ClientIp}{Colors.RESET}\n> ");
-                            return;
-                        }
-
-                        Client.Step = 4;
-                        Client.BytesRead = Client.StartPos;
-
-                        break;
-
-                    }
-                    case 4: {
-
-                        int bytePortion;
-                        var buffer = new byte[ServerConfig.ServingSize];
-                        if ((bytePortion = Client.File.Read(buffer)) != 0) 
-                        {
-                            while (SendData(Client, buffer, bytePortion, 500_000) == 0);
-                            
-                            Client.BytesRead += bytePortion;
-                        }
-                        
-                        if (Client.BytesRead >= Client.FileSize || bytePortion == 0) {
-                            Client.Step = 0;
-                            Client.File.Close();
-                            Console.Write($"{Colors.BLUE}File successfully transferred for {Colors.GREEN}{Client.ClientIp}{Colors.RESET}\n> ");
-                        }
-
-                        break;                 
-                    }
-                    case 5: {
-
-                        var buffer = Encoding.Unicode.GetBytes(DateTime.UtcNow.ToString(ServerConfig.DateFormat));
-                        var bufferBytes = BitConverter.GetBytes(buffer.Length).Concat(buffer).ToArray();
-                        while (SendData(Client, bufferBytes) == 0);
-                        Client.Step = 0;
-
-                        break;
-                    }
-                    case 6: {
-
-                        var buffer = Encoding.Unicode.GetBytes(Client.Command.Substring(Client.Command.IndexOf(' ') + 1));
-                        var bufferBytes = BitConverter.GetBytes(buffer.Length).Concat(buffer).ToArray();
-                        while (SendData(Client, bufferBytes) == 0);
-                        Client.Step = 0;
-
-                        break;
-                    }
-                }
+        private void MakeStep(ClientOperationContext client) 
+        {
+            try 
+            {
+                if (client.Step == 0)
+                    ParseCommand(client);
+                else if (client.Step == 1)
+                    GetFileSize(client);
+                else if (client.Step == 2)
+                    GetFilePart(client);
+                else if (client.Step == 3)
+                    SendFileSize(client);
+                else if (client.Step == 4)
+                    SendFilePart(client);
+                else if (client.Step == 5)
+                    ExecuteTime(client);
+                else if (client.Step == 6)
+                    ExecuteEcho(client);
             }
             catch (SocketException ex) when (ex.SocketErrorCode != SocketError.WouldBlock)
             {
-                if (Client.Step != 0) 
+                if (client.Step != 0) 
                 {
-                    if (Client.Step == 2)
-                        Client.Backup.LastReceiveData.CorruptedPos = Client.BytesRead;
-                    else if (Client.Step == 4)
-                        Client.Backup.LastSendData.CorruptedPos = Client.BytesRead;
+                    if (client.Step == 2)
+                        client.Backup.LastReceiveData.CorruptedPos = client.BytesRead;
+                    else if (client.Step == 4)
+                        client.Backup.LastSendData.CorruptedPos = client.BytesRead;
                     
-                    Client.Step = 0;
-                    Client.File?.Close();
-                    Client.IsConnected = false;
+                    client.Step = 0;
+                    client.File?.Close();
+                    client.IsConnected = false;
 
-                    Console.Write($"{Colors.RED}File operation failed for {Colors.GREEN}{Client.ClientIp}{Colors.RESET}\n> ");
+                    Console.Write($"File operation {Colors.RED}failed{Colors.RESET} for {Colors.YELLOW}{client.ClientIp}{Colors.RESET}\n> ");
                 }
             }
+        }
+
+        private void ParseCommand(ClientOperationContext client) 
+        {
+            var commandLengthBytes = new byte[sizeof(int)];
+            while (GetData(client, commandLengthBytes, sizeof(int)) == 0);
+
+            var commandLength = BitConverter.ToInt32(commandLengthBytes);
+            var commandBytes = new byte[commandLength];
+            while (GetData(client, commandBytes, commandLength) == 0);
+
+            client.Command = Encoding.Unicode.GetString(commandBytes);
+            var parameters = client.Command.Split(' ').Skip(1).ToArray();
+
+            if (client.Command.StartsWith("UPLOAD") && parameters.Length != 0)
+            {
+                client.FilePath = Path.GetFileName(parameters[0]);
+                client.Step = 1;
+            }
+            else if (client.Command.StartsWith("DOWNLOAD") && parameters.Length != 0)
+            {
+                client.FilePath = Path.GetFileName(parameters[0]);
+                client.Step = 3;
+            }
+            else if (client.Command.StartsWith("TIME"))
+                client.Step = 5;
+            else if (client.Command.StartsWith("ECHO") && parameters.Length != 0)
+                client.Step = 6;
+        }
+
+        private void GetFileSize(ClientOperationContext client) 
+        {
+            client.File = null;
+            var fileSizeBytes = new byte[sizeof(long)];
+            while (GetData(client, fileSizeBytes, sizeof(long)) == 0); 
+            
+            client.FileSize = BitConverter.ToInt64(fileSizeBytes);
+
+            client.StartPos = 0;
+            if (client.Backup.LastReceiveData.CanRecovery(client.FilePath, client.ClientIp))
+            {
+                client.File = new FileStream(client.FilePath, FileMode.Open, FileAccess.Write);
+                client.StartPos = client.Backup.LastReceiveData.CorruptedPos;
+                client.File.Seek(client.StartPos, SeekOrigin.Begin);
+            }
+            else
+                client.File = new FileStream(client.FilePath, FileMode.Create, FileAccess.Write);
+            
+            client.Backup.LastReceiveData = new LastOpData(client.FilePath, client.ClientIp);
+            
+            while (SendData(client, BitConverter.GetBytes(client.StartPos), sizeof(long)) == 0);
+            
+            client.Step = 2;
+            client.BytesRead = client.StartPos;
+        }
+
+        private void GetFilePart(ClientOperationContext client)
+        {
+            int bytePortion;
+            var buffer = new byte[ServerConfig.ServingSize];
+            while ((bytePortion = GetData(client, buffer, ServerConfig.ServingSize)) == 0);
+
+            client.File?.Write(buffer, 0, bytePortion);
+            client.BytesRead += bytePortion;
+
+            if (client.BytesRead >= client.FileSize) 
+            {
+                client.Step = 0;
+                client.File?.Close();
+                Console.WriteLine($"File {client.FilePath} {Colors.GREEN}successfully{Colors.RESET} transferred for {Colors.YELLOW}{client.ClientIp}{Colors.RESET}");
+            }
+        }
+
+        private void SendFileSize(ClientOperationContext client)
+        {
+            client.File = null;
+            client.StartPos = 0;
+            if (!Path.Exists(client.FilePath))
+                client.FileSize = client.StartPos = -1;
+            else
+            {
+                client.File = new FileStream(client.FilePath, FileMode.Open, FileAccess.Read);
+
+                if (client.Backup.LastSendData.CanRecovery(client.FilePath, client.ClientIp))
+                {
+                    client.StartPos = client.Backup.LastSendData.CorruptedPos;
+                    client.File.Seek(client.StartPos, SeekOrigin.Begin);
+                }
+                client.FileSize = client.File.Length;
+            }
+            
+            client.Backup.LastSendData = new LastOpData(client.FilePath, client.ClientIp);
+            
+            var fileSizeBytes = BitConverter.GetBytes(client.FileSize);
+            var startPosBytes = BitConverter.GetBytes(client.StartPos);
+            while (SendData(client, fileSizeBytes.Concat(startPosBytes).ToArray(), 2 * sizeof(long)) == 0);
+            
+            if ((client.FileSize == -1 && client.StartPos == -1) || client.File == null) 
+            {
+                client.Step = 0;
+                Console.WriteLine($"File operation {Colors.RED}failed{Colors.RESET} for {Colors.YELLOW}{client.ClientIp}{Colors.RESET}");
+                return;
+            }
+
+            client.Step = 4;
+            client.BytesRead = client.StartPos;
+        }
+
+        private void SendFilePart(ClientOperationContext client)
+        {
+            int bytePortion;
+            var buffer = new byte[ServerConfig.ServingSize];
+            if ((bytePortion = client.File.Read(buffer)) != 0) 
+            {
+                while (SendData(client, buffer, bytePortion) == 0);
+                client.BytesRead += bytePortion;
+            }
+            
+            if (client.BytesRead >= client.FileSize || bytePortion == 0) 
+            {
+                client.Step = 0;
+                client.File.Close();
+                Console.WriteLine($"File {client.FilePath} {Colors.GREEN}successfully{Colors.RESET} transferred for {Colors.YELLOW}{client.ClientIp}{Colors.RESET}");
+            }
+        }
+
+        private void ExecuteTime(ClientOperationContext client)
+        {
+            var buffer = Encoding.Unicode.GetBytes(DateTime.UtcNow.ToString(ServerConfig.DateFormat));
+            var bufferBytes = BitConverter.GetBytes(buffer.Length).Concat(buffer).ToArray();
+            while (SendData(client, bufferBytes) == 0);
+            client.Step = 0;
+        }
+
+        private void ExecuteEcho(ClientOperationContext client)
+        {
+            var buffer = Encoding.Unicode.GetBytes(client.Command.Substring(client.Command.IndexOf(' ') + 1));
+            var bufferBytes = BitConverter.GetBytes(buffer.Length).Concat(buffer).ToArray();
+            while (SendData(client, bufferBytes) == 0);
+            client.Step = 0;
         }
     }
 }

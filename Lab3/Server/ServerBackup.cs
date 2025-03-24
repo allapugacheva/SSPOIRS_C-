@@ -31,5 +31,7 @@ namespace Server
         internal LastOpData LastSendData { get; set; } = new();
 
         internal LastOpData LastReceiveData { get; set; } = new();
+
+        public bool AnyBackup() => LastSendData.CorruptedPos !=0 || LastReceiveData.CorruptedPos != 0;
     }
 }
