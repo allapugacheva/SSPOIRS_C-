@@ -10,7 +10,7 @@ namespace Server {
 
         public ServerBackup Backup { get; }
 
-        public IPAddress ClientIp { get; set; }
+        public string ClientIp { get; private set; }
 
         public bool IsConnected { get; set; }
 
@@ -28,14 +28,19 @@ namespace Server {
 
         public FileStream? File { get; set; }
 
-        public ClientOperationContext(Socket client, ServerBackup backup, IPAddress clientIp, bool isConnected) {
+        public ClientOperationContext(Socket client) {
 
             ClientSocket = client;
-            Backup = backup;
-            ClientIp = clientIp;
-            IsConnected = isConnected;
+            Backup = new ServerBackup();
+            ClientIp = client.RemoteEndPoint.ToString().Split(':')[0];
+            IsConnected = true;
             Step = 0;
             FilePath = "";
         }
+
+        public bool CanMakeStep() => IsConnected 
+                    && ((Step == 0 && ClientSocket.Poll(0, SelectMode.SelectRead)) || Step > 0);
+
+        public bool IsDisconnected() => !IsConnected && ClientSocket != null;
     }
 }

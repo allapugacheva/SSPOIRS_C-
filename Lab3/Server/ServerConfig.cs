@@ -4,7 +4,7 @@ namespace Server
 {
     public static class ServerConfig
     {
-        public const int AmountListeners = 1;
+        public const int AmountListeners = 100;
 
         public const int DefaultPort = 8080;
 
@@ -12,9 +12,9 @@ namespace Server
 
         public const int ServingSize = 64 * 1024;
 
-        public const int ReceiveBufferSize = 1024 * 1024 * 50;
+        public const int ReceiveBufferSize = 1024 * 1024 * 64;
         
-        public const int SendBufferSize = 1024 * 1024 * 50;
+        public const int SendBufferSize = 1024 * 1024 * 64;
         
         public const int KeepAliveTime = 10;
         public const int KeepAliveInterval = 5;  

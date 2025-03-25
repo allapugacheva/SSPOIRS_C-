@@ -94,37 +94,37 @@ namespace Client
             var bytes = BitConverter.GetBytes(commandBytes.Length).Concat(commandBytes).ToArray();
             if (command.StartsWith("UPLOAD") && File.Exists(filePath))
             {
-                SendData(bytes);
+                while (SendData(bytes) == 0);
                 res = SendFile(filePath);
             }
             else if (command.StartsWith("DOWNLOAD"))
             {
-                SendData(bytes);
+                while (SendData(bytes) == 0);
                 res = ReceiveFile(filePath);
             }
             else if (command.StartsWith("TIME"))
             {
-                SendData(bytes);
+                while (SendData(bytes) == 0);
 
                 var bufferLengthBytes = new byte[sizeof(int)];
-                while (GetData(bufferLengthBytes, sizeof(int), 15_000_000) != sizeof(int));
+                while (GetData(bufferLengthBytes, sizeof(int)) == 0);
 
                 var bufferLength = BitConverter.ToInt32(bufferLengthBytes);
                 var timeBuffer = new byte[bufferLength];
-                while (GetData(timeBuffer, bufferLength, 15_000_000) != bufferLength);
+                while (GetData(timeBuffer, bufferLength) == 0);
 
                 Console.WriteLine($"Server time: {Encoding.Unicode.GetString(timeBuffer)}");
             }
             else if (command.StartsWith("ECHO"))
             {
-                SendData(bytes);
+                while (SendData(bytes) == 0);
 
                 var bufferLengthBytes = new byte[sizeof(int)];
-                while (GetData(bufferLengthBytes, sizeof(int), 15_000_000) != sizeof(int));
+                while (GetData(bufferLengthBytes, sizeof(int)) == 0);
 
                 var bufferLength = BitConverter.ToInt32(bufferLengthBytes);
                 var timeBuffer = new byte[bufferLength];
-                while (GetData(timeBuffer, bufferLength, 15_000_000) != bufferLength);
+                while (GetData(timeBuffer, bufferLength) == 0);
 
                 Console.WriteLine($"{Encoding.Unicode.GetString(timeBuffer)}");
             }
@@ -148,7 +148,7 @@ namespace Client
             var fileSize = reader.Length;
 			Console.WriteLine("File size: " + fileSize);
             
-            SendData(BitConverter.GetBytes(fileSize));
+            while (SendData(BitConverter.GetBytes(fileSize)) == 0);
             
             var startPosBytes = new byte[sizeof(long)];
             try { while (GetData(startPosBytes,sizeof(long)) != sizeof(long)) ; }
