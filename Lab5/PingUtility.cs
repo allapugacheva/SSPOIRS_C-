@@ -126,24 +126,21 @@ public class PingUtility
             using (Socket socket = new Socket(AddressFamily.InterNetwork, SocketType.Raw, ProtocolType.Icmp))
             {
                 // Разрешаем ручное управление IP заголовком
-                //socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.HeaderIncluded, true);
+                socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.HeaderIncluded, true);
                 socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReceiveTimeout, timeout);
                 if (ttl != 0)
                     socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.IpTimeToLive, ttl);
                 socket.ReceiveBufferSize = 1024;
                 socket.EnableBroadcast = true;
 
-                if (spoofSource != null)
-                {
-                    // Привязываем сокет к поддельному адресу
-                    socket.Bind(new IPEndPoint(spoofSource, 0));
-                }
+                // if (spoofSource != null)
+                // {
+                //     // Привязываем сокет к поддельному адресу
+                //     socket.Bind(new IPEndPoint(spoofSource, 0));
+                // }
 
                 // Подменяем исходный адрес если указан
-                uint sourceIp = spoofSource != null ?
-                    BitConverter.ToUInt32(spoofSource.GetAddressBytes(), 0) :
-                    BitConverter.ToUInt32(IPAddress.Any.GetAddressBytes(), 0);
-                uint destIp = BitConverter.ToUInt32(ipAddress.GetAddressBytes(), 0);
+                var sourceIp = spoofSource != null ? spoofSource : GetLocalIpAddress();
 
                 // Создаем ICMP пакет
                 var buf = new byte[1024];
@@ -160,32 +157,12 @@ public class PingUtility
                     Buffer.BlockCopy(BitConverter.GetBytes(checksum), 0, buf, 2, 2);
                 }
 
-                // Создаем IP заголовок
-                RawIPHeader ipHeader = new RawIPHeader(
-                    sourceIp,
-                    destIp,
-                    (ushort)(20 + ind), // IP header + ICMP data
-                    1, // ICMP protocol
-                    (byte)(ttl == 0 ? 128 : ttl)
-                );
-
-                // // Комбинируем IP header + ICMP data
-                byte[] fullPacket = new byte[20 + ind];
-                IntPtr ipHeaderPtr = Marshal.AllocHGlobal(20);
-                try
-                {
-                    Marshal.StructureToPtr(ipHeader, ipHeaderPtr, false);
-                    Marshal.Copy(ipHeaderPtr, fullPacket, 0, 20);
-                }
-                finally
-                {
-                    Marshal.FreeHGlobal(ipHeaderPtr);
-                }
-                Buffer.BlockCopy(buf, 0, fullPacket, 20, ind);
+                // Комбинируем IP header + ICMP data
+                byte[] fullPacket = CreateFullIpPacket(buf, ind, sourceIp, ipAddress, ttl);
 
                 var sendTimestamp = Stopwatch.GetTimestamp();
                 // Отправляем пакет с поддельным source IP
-                await socket.SendToAsync(buf, SocketFlags.None, new IPEndPoint(ipAddress, 0));
+                await socket.SendToAsync(fullPacket, SocketFlags.None, new IPEndPoint(ipAddress, 0));
                 // Прием ответа (обычным способом)
                 byte[] receiveBuffer = new byte[1024];
 
@@ -259,6 +236,52 @@ public class PingUtility
         }
 
         return result;
+    }
+
+    private static IPAddress GetLocalIpAddress()
+    {
+        var hostEntry = Dns.GetHostEntry(Dns.GetHostName());
+        return hostEntry.AddressList.FirstOrDefault(ip =>
+            ip.AddressFamily == AddressFamily.InterNetwork &&
+            !IPAddress.IsLoopback(ip));
+    }
+
+    private static byte[] CreateFullIpPacket(byte[] icmpData, int icmpLength, IPAddress sourceIp, IPAddress destIp, int ttl)
+    {
+        uint source = sourceIp != null ?
+            BitConverter.ToUInt32(sourceIp.GetAddressBytes(), 0) :
+            BitConverter.ToUInt32(IPAddress.Any.GetAddressBytes(), 0);
+
+        uint dest = BitConverter.ToUInt32(destIp.GetAddressBytes(), 0);
+
+        // Создаем IP заголовок
+        RawIPHeader ipHeader = new RawIPHeader(
+            source, dest, (ushort)(20 + icmpLength), 1, (byte)(ttl == 0 ? 128 : ttl)
+        );
+
+        // Комбинируем IP header + ICMP data
+        byte[] fullPacket = new byte[20 + icmpLength];
+
+        using (var ms = new MemoryStream(fullPacket))
+        using (var writer = new BinaryWriter(ms))
+        {
+            // Записываем IP заголовок
+            writer.Write(ipHeader.VersionAndHeaderLength);
+            writer.Write(ipHeader.ToS);
+            writer.Write(IPAddress.HostToNetworkOrder((short)ipHeader.Length));
+            writer.Write(IPAddress.HostToNetworkOrder((short)ipHeader.Identification));
+            writer.Write(IPAddress.HostToNetworkOrder((short)ipHeader.FlagsAndFragmentOffset));
+            writer.Write(ipHeader.Ttl);
+            writer.Write(ipHeader.Protocol);
+            writer.Write(IPAddress.HostToNetworkOrder((short)ipHeader.Checksum));
+            writer.Write(ipHeader.Source);
+            writer.Write(ipHeader.Destination);
+
+            // Записываем ICMP данные
+            writer.Write(icmpData, 0, icmpLength);
+        }
+
+        return fullPacket;
     }
 
     // public static async Task<PingResult> Ping(string host, int timeout = 1000, int ttl = 0)
