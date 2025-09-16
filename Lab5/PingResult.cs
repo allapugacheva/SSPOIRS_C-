@@ -9,5 +9,4 @@ public class PingResult
     public IPAddress Address { get; set; }
     public double RoundTripTime { get; set; }
     public IPStatus Status { get; set; }
-    public string? ErrorMessage { get; set; }
 }

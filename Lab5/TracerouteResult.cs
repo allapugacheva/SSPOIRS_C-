@@ -10,5 +10,4 @@ public class TracerouteResult
     public string Hostname { get; set; }
     public long RoundTripTime { get; set; }
     public IPStatus Status { get; set; }
-    public string? ErrorMessage { get; set; }
 }

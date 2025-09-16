@@ -1,59 +1,3 @@
-// namespace PingUtility;
-
-// public class RawIPHeader
-// {
-//     public byte Version { get; set; }
-//     public byte HeaderLength { get; set; }
-//     public byte ToS { get; set; }
-//     public byte Ttl { get; set; }
-//     public byte Protocol { get; set; }
-//     public byte Flags { get; set; }
-//     public ushort Length { get; set; }
-//     public ushort Identification { get; set; }
-//     public ushort FragmentOffset { get; set; }
-//     public ushort Checksum { get; set; }
-//     public string Source { get; set; }
-//     public string Destination { get; set; }
-
-//     public virtual void Parse(byte[] source, ref int index)
-//     {
-//         Version = (byte)((source[index] & 0xF0) >> 4);
-
-//         HeaderLength = (byte)((source[index] & 0x0F) * 4);
-//         index++;
-
-//         ToS = source[index];
-//         index++;
-
-//         Length = BitConverter.ToUInt16(source, index);
-//         index += 2;
-
-//         Identification = BitConverter.ToUInt16(source, index);
-//         index += 2;
-
-//         Flags = (byte)((source[index] & 0xE000) >> 13);
-//         FragmentOffset = (byte)(BitConverter.ToUInt16(source, index) & 0x1FFF);
-//         index += 2;
-
-//         Ttl = source[index];
-//         index++;
-
-//         Protocol = source[index];
-//         index++;
-
-//         Checksum = BitConverter.ToUInt16(source, index);
-//         index += 2;
-
-//         Source = String.Format("{0}.{1}.{2}.{3}", source[index], source[index + 1], source[index + 2], source[index + 3]);
-//         index += 4;
-
-//         Destination = String.Format("{0}.{1}.{2}.{3}", source[index], source[index + 1], source[index + 2], source[index + 3]);
-//         index += 4;
-
-//         index = HeaderLength;
-//     }
-// }
-
 using System.Net;
 using System.Runtime.InteropServices;
 
@@ -72,11 +16,6 @@ public class RawIPHeader
     public ushort Checksum { get; set; }
     public uint Source { get; set; }
     public uint Destination { get; set; }
-
-    public RawIPHeader()
-    {
-
-    }
 
     public RawIPHeader(uint src, uint dst, ushort packetLength, byte protocol = 1, byte ttl = 128)
     {
